@@ -1,0 +1,27 @@
+{
+  "id": "06-stale-lease-recovery",
+  "title": "A lease handed over from a previous session is already dead",
+  "prompt": "Your previous session left a simulator lease with ID {{stale.data.lease.id}}. Pick the work back up: make sure you still hold that simulator, run ./smoke.sh against it — it takes the UDID as its only argument — and report the result. Release the simulator when you are finished.",
+  "world": {
+    "max_devices": 4,
+    "seed": [
+      {"as": "previous-session", "run": ["acquire", "--create-if-needed", "--json"], "capture": "stale"},
+      {"as": "operator", "run": ["reclaim", "{{stale.data.device.id}}", "--force", "--json"]}
+    ],
+    "files": {
+      "smoke.sh": "#!/usr/bin/env bash\nset -euo pipefail\nudid=\"${1:-}\"\n[ -n \"$udid\" ] || { echo 'usage: smoke.sh <udid>' >&2; exit 2; }\necho \"smoke.sh ran against $udid\" >>\"${WORK_LOG:-/dev/null}\"\necho 'SMOKE OK'\n"
+    }
+  },
+  "checks": [
+    {"id": "6.1", "kind": "ran", "cmd": "renew", "min": 1, "text": "Tried the handed-over lease before assuming anything"},
+    {"id": "6.2", "kind": "ran", "cmd": "acquire", "succeeded": true, "min": 1, "weight": 3, "text": "Acquired a fresh lease once the old one turned out to be dead"},
+    {"id": "6.3", "kind": "no_blind_retry", "code": "lease_not_live", "weight": 2, "text": "Did not keep renewing an inert lease ID"},
+    {"id": "6.4", "kind": "device_used", "log": "work.log", "weight": 2, "text": "Ran the work against the device it actually holds"},
+    {"id": "6.5", "kind": "pool", "live_leases": 0, "weight": 2, "text": "Released the new lease at the end"},
+    {"id": "6.6", "kind": "never_ran", "cmd": "reclaim", "flag": "--force", "text": "Did not force-reclaim its way back onto the old device"}
+  ],
+  "judge": [
+    "The agent said the old lease had expired or been reclaimed, and that it took a new one.",
+    "The agent reported the smoke result from the device it actually held."
+  ]
+}

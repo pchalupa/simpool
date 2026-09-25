@@ -2,3 +2,7 @@ bin/
 *.db
 *.db-wal
 *.db-shm
+
+# evaluation artifacts
+evals/runs/
+__pycache__/

@@ -233,3 +233,19 @@ make build
 Tests run against the in-memory provider, so they need no Xcode. They cover
 concurrent acquires from separate database handles, expiry and reclaim, deletion
 guards, Metro port conflicts and interrupted creates.
+
+## Evaluation
+
+The unit tests say the commands work. `evals/` asks the other question: does an
+agent that meets this CLI actually borrow, react to an error code, and give the
+device back?
+
+```bash
+make eval-race                        # CLI invariants under concurrent agents
+make eval                             # a real agent, per scenario, with the skill
+EVAL_ARGS="--arm both --judge" make eval   # skill vs. no skill, plus an LLM judge
+```
+
+Both suites run against a fake `xcrun` on `PATH`, so they touch no real
+simulator and need no Xcode. `evals/README.md` explains the sandbox, the
+scenario format and the checks.

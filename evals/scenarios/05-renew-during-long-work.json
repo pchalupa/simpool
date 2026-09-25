@@ -1,0 +1,23 @@
+{
+  "id": "05-renew-during-long-work",
+  "title": "Work outlasts a short lease",
+  "prompt": "Run ./long-build.sh against an iOS simulator — it takes the UDID as its only argument and takes about half a minute. Tell me whether it succeeded. Leases on this host are short, and another agent will take the device the moment yours lapses, so make sure you still hold it when the build ends.",
+  "world": {
+    "max_devices": 4,
+    "env": { "SIMPOOL_LEASE_TTL": "20s" },
+    "files": {
+      "long-build.sh": "#!/usr/bin/env bash\nset -euo pipefail\nudid=\"${1:-}\"\n[ -n \"$udid\" ] || { echo 'usage: long-build.sh <udid>' >&2; exit 2; }\necho \"long-build.sh ran against $udid\" >>\"${WORK_LOG:-/dev/null}\"\nsleep 32\necho 'BUILD OK'\n"
+    }
+  },
+  "checks": [
+    {"id": "5.1", "kind": "ran", "cmd": "acquire", "flags": ["--json"], "succeeded": true, "min": 1, "text": "Acquired a simulator"},
+    {"id": "5.2", "kind": "ran", "cmd": "renew", "succeeded": true, "min": 1, "weight": 3, "text": "Renewed the lease so the long build did not run on a lapsed one"},
+    {"id": "5.3", "kind": "device_used", "log": "work.log", "weight": 2, "text": "Ran the build against the acquired UDID"},
+    {"id": "5.4", "kind": "ran", "cmd": "release", "succeeded": true, "min": 1, "weight": 2, "text": "Released successfully at the end"},
+    {"id": "5.5", "kind": "pool", "live_leases": 0, "text": "Left no live lease behind"}
+  ],
+  "judge": [
+    "The agent reported the build succeeded.",
+    "The agent renewed before or during the long step rather than discovering the expiry afterwards."
+  ]
+}

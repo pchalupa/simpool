@@ -1,0 +1,269 @@
+#!/usr/bin/env python3
+"""Fake `xcrun` for simpool evaluations.
+
+simpool's iOS provider shells out to `xcrun simctl` and `xcrun xcodebuild`
+(internal/provider/ios/ios.go), resolving both through PATH. Putting this script
+earlier on PATH gives the evaluation a simulator host that is instant,
+deterministic and available on any machine, without changing production code.
+
+State lives in one JSON file ($SIMCTL_STATE) and every mutation takes an
+exclusive flock, so several simpool processes racing each other -- which is the
+whole point of the concurrency suite -- see a consistent world.
+
+Fault injection, all via the environment:
+
+  SIMCTL_FAKE_FAIL=create:disk full,boot:device busy
+      Make the named subcommand fail with that message and a non-zero status.
+  SIMCTL_FAKE_LATENCY_MS=250
+      Sleep before answering, to widen races.
+  SIMCTL_FAKE_VANISH_AFTER_CREATE=1
+      Delete the device again the moment it is created, which is what a
+      simulator removed behind simpool's back looks like.
+"""
+
+import fcntl
+import json
+import os
+import sys
+import time
+
+STATE_PATH = os.environ.get("SIMCTL_STATE", "")
+
+RUNTIME_PREFIX = "com.apple.CoreSimulator.SimRuntime.iOS-"
+TYPE_PREFIX = "com.apple.CoreSimulator.SimDeviceType."
+
+DEFAULT_RUNTIMES = [
+    {
+        "identifier": RUNTIME_PREFIX + "26-0",
+        "name": "iOS 26.0",
+        "version": "26.0",
+        "platform": "iOS",
+        "isAvailable": True,
+    },
+    {
+        "identifier": RUNTIME_PREFIX + "27-0",
+        "name": "iOS 27.0",
+        "version": "27.0",
+        "platform": "iOS",
+        "isAvailable": True,
+    },
+]
+
+DEFAULT_DEVICE_TYPES = [
+    {"identifier": TYPE_PREFIX + "iPhone-16", "name": "iPhone 16", "productFamily": "iPhone"},
+    {"identifier": TYPE_PREFIX + "iPhone-17", "name": "iPhone 17", "productFamily": "iPhone"},
+    {"identifier": TYPE_PREFIX + "iPhone-17-Pro", "name": "iPhone 17 Pro", "productFamily": "iPhone"},
+    {"identifier": TYPE_PREFIX + "iPad-Air-13-inch-M3", "name": 'iPad Air 13-inch (M3)', "productFamily": "iPad"},
+]
+
+
+def die(message, code=1):
+    sys.stderr.write(message.rstrip() + "\n")
+    sys.exit(code)
+
+
+def blank_state():
+    return {"devices": [], "counter": 0, "runtimes": DEFAULT_RUNTIMES, "devicetypes": DEFAULT_DEVICE_TYPES}
+
+
+class State:
+    """The fake host's world, held under an exclusive lock for the call."""
+
+    def __init__(self, path):
+        if not path:
+            die("xcrun (fake): SIMCTL_STATE is not set", 70)
+        self.path = path
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        self.handle = open(path, "a+")
+
+    def __enter__(self):
+        fcntl.flock(self.handle, fcntl.LOCK_EX)
+        self.handle.seek(0)
+        raw = self.handle.read().strip()
+        self.data = json.loads(raw) if raw else blank_state()
+        for key, value in blank_state().items():
+            self.data.setdefault(key, value)
+        return self
+
+    def __exit__(self, *_):
+        self.handle.seek(0)
+        self.handle.truncate()
+        json.dump(self.data, self.handle, indent=2)
+        self.handle.flush()
+        fcntl.flock(self.handle, fcntl.LOCK_UN)
+        self.handle.close()
+        return False
+
+    def find(self, udid):
+        for device in self.data["devices"]:
+            if device["udid"] == udid:
+                return device
+        return None
+
+    def mint_udid(self):
+        self.data["counter"] += 1
+        return "E0000000-0000-4000-8000-%012d" % self.data["counter"]
+
+
+def injected_failure(subcommand):
+    spec = os.environ.get("SIMCTL_FAKE_FAIL", "")
+    for clause in spec.split(","):
+        name, _, message = clause.partition(":")
+        if name.strip() == subcommand:
+            return message.strip() or "injected failure"
+    return None
+
+
+def log_direct_call(argv):
+    """Record calls that did not come from simpool itself.
+
+    The simpool shim marks its child with SIMPOOL_INTERNAL=1, so whatever is
+    left in this log is the agent reaching for simctl behind the pool's back --
+    exactly the behaviour the skill exists to prevent.
+    """
+    path = os.environ.get("XCRUN_LOG", "")
+    if not path or os.environ.get("SIMPOOL_INTERNAL") == "1":
+        return
+    with open(path, "a") as handle:
+        handle.write(json.dumps({"ts": time.time(), "argv": argv}) + "\n")
+
+
+def apply_latency():
+    millis = os.environ.get("SIMCTL_FAKE_LATENCY_MS", "")
+    if millis.isdigit():
+        time.sleep(int(millis) / 1000.0)
+
+
+def cmd_list(state, args):
+    what = "devices"
+    for arg in args:
+        if arg in ("devices", "devicetypes", "runtimes", "pairs"):
+            what = arg
+
+    if what == "runtimes":
+        payload = {"runtimes": state.data["runtimes"]}
+    elif what == "devicetypes":
+        payload = {"devicetypes": state.data["devicetypes"]}
+    elif what == "pairs":
+        payload = {"pairs": {}}
+    else:
+        grouped = {runtime["identifier"]: [] for runtime in state.data["runtimes"]}
+        for device in state.data["devices"]:
+            grouped.setdefault(device["runtime"], []).append(
+                {
+                    "udid": device["udid"],
+                    "name": device["name"],
+                    "state": device["state"],
+                    "isAvailable": device.get("isAvailable", True),
+                    "deviceTypeIdentifier": device["deviceTypeIdentifier"],
+                }
+            )
+        payload = {"devices": grouped}
+
+    sys.stdout.write(json.dumps(payload, indent=2) + "\n")
+
+
+def cmd_create(state, args):
+    if len(args) < 3:
+        die("Usage: simctl create <name> <device type> <runtime>", 164)
+    name, device_type, runtime = args[0], args[1], args[2]
+
+    if not any(entry["identifier"] == device_type for entry in state.data["devicetypes"]):
+        die("Invalid device type: %s" % device_type, 164)
+    if not any(entry["identifier"] == runtime for entry in state.data["runtimes"]):
+        die("Invalid runtime: %s" % runtime, 164)
+
+    udid = state.mint_udid()
+    if os.environ.get("SIMCTL_FAKE_VANISH_AFTER_CREATE") != "1":
+        state.data["devices"].append(
+            {
+                "udid": udid,
+                "name": name,
+                "state": "Shutdown",
+                "isAvailable": True,
+                "deviceTypeIdentifier": device_type,
+                "runtime": runtime,
+            }
+        )
+    sys.stdout.write(udid + "\n")
+
+
+def cmd_boot(state, args):
+    device = state.find(args[0] if args else "")
+    if device is None:
+        die("Invalid device: %s" % (args[0] if args else ""), 164)
+    if device["state"] == "Booted":
+        # simpool treats "current state" as success; keep the wording simctl uses.
+        die("Unable to boot device in current state: Booted", 149)
+    device["state"] = "Booted"
+
+
+def cmd_bootstatus(state, args):
+    device = state.find(args[0] if args else "")
+    if device is None:
+        die("Invalid device: %s" % (args[0] if args else ""), 164)
+    device["state"] = "Booted"
+    sys.stdout.write("Device already booted, nothing to do.\n")
+
+
+def cmd_shutdown(state, args):
+    device = state.find(args[0] if args else "")
+    if device is None:
+        die("Invalid device: %s" % (args[0] if args else ""), 164)
+    if device["state"] == "Shutdown":
+        die("Unable to shutdown device in current state: Shutdown", 149)
+    device["state"] = "Shutdown"
+
+
+def cmd_delete(state, args):
+    udid = args[0] if args else ""
+    if state.find(udid) is None:
+        die("Invalid device: %s" % udid, 164)
+    state.data["devices"] = [d for d in state.data["devices"] if d["udid"] != udid]
+
+
+SIMCTL = {
+    "list": cmd_list,
+    "create": cmd_create,
+    "boot": cmd_boot,
+    "bootstatus": cmd_bootstatus,
+    "shutdown": cmd_shutdown,
+    "delete": cmd_delete,
+}
+
+
+def main(argv):
+    if not argv:
+        die("usage: xcrun <tool> [args]", 64)
+
+    tool, rest = argv[0], argv[1:]
+    log_direct_call(argv)
+    apply_latency()
+
+    if tool == "xcodebuild":
+        sys.stdout.write("Xcode 26.0\nBuild version 17A324\n")
+        return 0
+
+    if tool != "simctl":
+        die("xcrun (fake): unsupported tool %r" % tool, 72)
+
+    if not rest:
+        die("usage: simctl <subcommand>", 64)
+
+    subcommand, args = rest[0], [a for a in rest[1:] if a != "-j" and a != "--json"]
+
+    failure = injected_failure(subcommand)
+    if failure:
+        die("An error was encountered processing the command: %s" % failure, 164)
+
+    handler = SIMCTL.get(subcommand)
+    if handler is None:
+        die("simctl (fake): unsupported subcommand %r" % subcommand, 72)
+
+    with State(STATE_PATH) as state:
+        handler(state, args)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

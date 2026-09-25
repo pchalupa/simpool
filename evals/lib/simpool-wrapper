@@ -1,0 +1,54 @@
+#!/usr/bin/env python3
+"""PATH shim installed as `simpool` inside an evaluation sandbox.
+
+It records every invocation the agent makes -- argv, exit status, and the JSON
+document simpool printed -- to $SIMPOOL_EVAL_LOG as JSONL, then behaves exactly
+like the real binary ($SIMPOOL_REAL_BIN) so the agent notices nothing.
+
+Judging agent behaviour from this log rather than from a transcript keeps the
+checks agent-agnostic: any harness that shells out to `simpool` can be scored
+with the same scenarios.
+"""
+
+import json
+import os
+import subprocess
+import sys
+import time
+
+real = os.environ.get("SIMPOOL_REAL_BIN")
+log = os.environ.get("SIMPOOL_EVAL_LOG")
+
+if not real:
+    sys.stderr.write("simpool (eval shim): SIMPOOL_REAL_BIN is not set\n")
+    sys.exit(70)
+
+started = time.time()
+child_env = dict(os.environ, SIMPOOL_INTERNAL="1")
+proc = subprocess.run([real] + sys.argv[1:], capture_output=True, text=True, env=child_env)
+sys.stdout.write(proc.stdout)
+sys.stderr.write(proc.stderr)
+
+if log:
+    payload = None
+    try:
+        payload = json.loads(proc.stdout)
+    except ValueError:
+        pass
+
+    entry = {
+        "ts": started,
+        "duration_ms": round((time.time() - started) * 1000, 1),
+        "argv": sys.argv[1:],
+        "exit": proc.returncode,
+        "ok": payload.get("ok") if isinstance(payload, dict) else None,
+        "error_code": (payload.get("error") or {}).get("code")
+        if isinstance(payload, dict) and payload.get("error")
+        else None,
+        "stdout": proc.stdout[:4000],
+        "stderr": proc.stderr[:2000],
+    }
+    with open(log, "a") as handle:
+        handle.write(json.dumps(entry) + "\n")
+
+sys.exit(proc.returncode)

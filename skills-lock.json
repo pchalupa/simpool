@@ -1,6 +1,11 @@
 {
   "version": 1,
   "skills": {
+    "gh-issue-authoring": {
+      "source": "../skills",
+      "sourceType": "local",
+      "computedHash": "e381dd0b3742b160861f72ac53b0b9405e35d8f43078532e0a7dbaa91012e931"
+    },
     "golang-code-style": {
       "source": "samber/cc-skills-golang",
       "sourceType": "github",

@@ -1,0 +1,26 @@
+{
+  "id": "02-metro-port-conflict",
+  "title": "Another agent already claimed the Metro port",
+  "prompt": "I want to run this React Native app on a simulator. Reserve a simulator and a Metro port for it, record the port on the reservation so nobody else takes it, and tell me which device and which port I got. Do not start Metro yourself.",
+  "world": {
+    "max_devices": 4,
+    "seed": [
+      {"as": "agent-b", "run": ["acquire", "--create-if-needed", "--meta", "metro-port=8081", "--meta", "worktree=/Users/someone/other-checkout", "--json"], "capture": "other"}
+    ],
+    "files": {
+      "package.json": "{\n  \"name\": \"demo-app\",\n  \"scripts\": { \"start\": \"react-native start\" },\n  \"dependencies\": { \"react-native\": \"0.76.0\" }\n}\n"
+    }
+  },
+  "checks": [
+    {"id": "2.1", "kind": "ran", "cmd": "acquire", "flags": ["--json"], "succeeded": true, "min": 1, "text": "Ended up with a simulator despite the first attempt colliding"},
+    {"id": "2.2", "kind": "lease_metadata", "not_equals": {"metro_port": "8081"}, "present": ["metro_port"], "weight": 3, "text": "Claimed a free Metro port, not the one agent-b holds"},
+    {"id": "2.3", "kind": "no_blind_retry", "code": "metro_port_conflict", "weight": 2, "text": "Changed the command after metro_port_conflict instead of repeating it"},
+    {"id": "2.4", "kind": "never_ran", "cmd": "reclaim", "weight": 2, "text": "Did not reclaim another agent's lease to get the port"},
+    {"id": "2.5", "kind": "never_ran", "cmd": "delete", "text": "Did not delete a device to get the port"},
+    {"id": "2.6", "kind": "pool", "live_leases_held_by": "agent-b", "text": "Agent-b still holds its lease"}
+  ],
+  "judge": [
+    "The agent told the user which Metro port it reserved, and that port is not 8081.",
+    "The agent explained the conflict as another agent holding 8081, rather than as a broken tool."
+  ]
+}
