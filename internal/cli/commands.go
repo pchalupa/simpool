@@ -20,108 +20,115 @@ func commands() map[string]command {
 			summary:   "List every device this pool knows, with its lease",
 			usage:     "list [--json]",
 			needsPool: true,
-			run: func(ctx context.Context, environment *env, flags *flag.FlagSet, args []string) (any, error) {
-				if err := parseNoArgs(flags, args); err != nil {
+			bind: noFlags(func(ctx context.Context, environment *env, args []string) (any, error) {
+				if err := requireNoArgs(args); err != nil {
 					return nil, err
 				}
 
 				return environment.pool.List(ctx)
-			},
+			}),
 		},
 		"inspect": {
 			name:      "inspect",
 			summary:   "Show one device, its provenance and its lease",
 			usage:     "inspect <device-id> [--json]",
 			needsPool: true,
-			run: func(ctx context.Context, environment *env, flags *flag.FlagSet, args []string) (any, error) {
-				deviceID, err := parseOneArg(flags, args, "device-id")
+			bind: noFlags(func(ctx context.Context, environment *env, args []string) (any, error) {
+				deviceID, err := requireArg(args, "device-id")
 				if err != nil {
 					return nil, err
 				}
 
 				return environment.pool.Inspect(ctx, deviceID)
-			},
+			}),
 		},
 		"acquire": {
 			name:      "acquire",
 			summary:   "Reserve a matching simulator and return its device and lease IDs",
 			usage:     "acquire [--device-type TYPE] [--runtime RUNTIME] [--meta KEY=VALUE]... [--create-if-needed]",
 			needsPool: true,
-			run:       runAcquire,
+			bind:      bindAcquire,
 		},
 		"renew": {
 			name:      "renew",
 			summary:   "Extend a live lease before it expires",
 			usage:     "renew <lease-id> [--ttl DURATION] [--meta KEY=VALUE]...",
 			needsPool: true,
-			run:       runRenew,
+			bind:      bindRenew,
 		},
 		"release": {
 			name:      "release",
 			summary:   "Free a lease; the device is left booted unless --shutdown",
 			usage:     "release <lease-id> [--shutdown]",
 			needsPool: true,
-			run:       runRelease,
+			bind:      bindRelease,
 		},
 		"create": {
 			name:      "create",
 			summary:   "Create a pool-owned simulator without leasing it",
 			usage:     "create [--device-type TYPE] [--runtime RUNTIME]",
 			needsPool: true,
-			run:       runCreate,
+			bind:      bindCreate,
 		},
 		"delete": {
 			name:      "delete",
 			summary:   "Delete an idle pool-owned simulator (never an external one)",
 			usage:     "delete <device-id> [--force]",
 			needsPool: true,
-			run:       runDelete,
+			bind:      bindDelete,
 		},
 		"import": {
 			name:      "import",
 			summary:   "Allow an externally created simulator to be borrowed",
 			usage:     "import <device-id> [--undo]",
 			needsPool: true,
-			run:       runImport,
+			bind:      bindImport,
 		},
 		"reclaim": {
 			name:      "reclaim",
 			summary:   "Recover a device whose borrower is gone",
 			usage:     "reclaim <device-id> [--force]",
 			needsPool: true,
-			run:       runReclaim,
+			bind:      bindReclaim,
 		},
 		"shutdown": {
 			name:      "shutdown",
 			summary:   "Power a simulator off without changing its lease",
 			usage:     "shutdown <device-id>",
 			needsPool: true,
-			run: func(ctx context.Context, environment *env, flags *flag.FlagSet, args []string) (any, error) {
-				deviceID, err := parseOneArg(flags, args, "device-id")
+			bind: noFlags(func(ctx context.Context, environment *env, args []string) (any, error) {
+				deviceID, err := requireArg(args, "device-id")
 				if err != nil {
 					return nil, err
 				}
 
 				return environment.pool.Shutdown(ctx, deviceID)
-			},
+			}),
 		},
 		"doctor": {
 			name:      "doctor",
 			summary:   "Check the toolchain, the state directory and pool health",
 			usage:     "doctor [--json]",
 			needsPool: true,
-			run: func(ctx context.Context, environment *env, flags *flag.FlagSet, args []string) (any, error) {
-				if err := parseNoArgs(flags, args); err != nil {
+			bind: noFlags(func(ctx context.Context, environment *env, args []string) (any, error) {
+				if err := requireNoArgs(args); err != nil {
 					return nil, err
 				}
 
 				return environment.pool.Doctor(ctx)
-			},
+			}),
 		},
 	}
 }
 
-func runAcquire(ctx context.Context, environment *env, flags *flag.FlagSet, args []string) (any, error) {
+// noFlags binds a command that has no options beyond --json.
+func noFlags(act action) func(*flag.FlagSet) action {
+	return func(*flag.FlagSet) action {
+		return act
+	}
+}
+
+func bindAcquire(flags *flag.FlagSet) action {
 	platform := flags.String("platform", "ios", "platform to borrow from")
 	deviceType := flags.String("device-type", "", "device type identifier, name or unambiguous fragment")
 	runtime := flags.String("runtime", "", "runtime identifier, name or version (e.g. 26.5)")
@@ -132,102 +139,114 @@ func runAcquire(ctx context.Context, environment *env, flags *flag.FlagSet, args
 	createIfNeeded := flags.Bool("create-if-needed", false, "create a pool-owned device when none is free")
 	noBoot := flags.Bool("no-boot", false, "do not boot the device after leasing it")
 
-	if err := parseNoArgs(flags, args); err != nil {
-		return nil, err
-	}
+	return func(ctx context.Context, environment *env, args []string) (any, error) {
+		if err := requireNoArgs(args); err != nil {
+			return nil, err
+		}
 
-	return environment.pool.Acquire(ctx, pool.AcquireRequest{
-		Platform:       *platform,
-		DeviceType:     *deviceType,
-		Runtime:        *runtime,
-		Metadata:       metadata.withoutEmptyValues(),
-		Borrower:       *borrower,
-		TTL:            *ttl,
-		CreateIfNeeded: *createIfNeeded,
-		Boot:           !*noBoot,
-	})
+		return environment.pool.Acquire(ctx, pool.AcquireRequest{
+			Platform:       *platform,
+			DeviceType:     *deviceType,
+			Runtime:        *runtime,
+			Metadata:       metadata.withoutEmptyValues(),
+			Borrower:       *borrower,
+			TTL:            *ttl,
+			CreateIfNeeded: *createIfNeeded,
+			Boot:           !*noBoot,
+		})
+	}
 }
 
-func runRenew(ctx context.Context, environment *env, flags *flag.FlagSet, args []string) (any, error) {
+func bindRenew(flags *flag.FlagSet) action {
 	ttl := flags.Duration("ttl", 0, "new lease duration measured from now")
 	metadata := newMetaFlag()
 	flags.Var(metadata, "meta", metadataUsage+"; an empty value removes the key")
 
-	leaseID, err := parseOneArg(flags, args, "lease-id")
-	if err != nil {
-		return nil, err
-	}
+	return func(ctx context.Context, environment *env, args []string) (any, error) {
+		leaseID, err := requireArg(args, "lease-id")
+		if err != nil {
+			return nil, err
+		}
 
-	return environment.pool.Renew(ctx, pool.RenewRequest{
-		LeaseID:  leaseID,
-		TTL:      *ttl,
-		Metadata: metadata.values,
-	})
+		return environment.pool.Renew(ctx, pool.RenewRequest{
+			LeaseID:  leaseID,
+			TTL:      *ttl,
+			Metadata: metadata.values,
+		})
+	}
 }
 
-func runRelease(ctx context.Context, environment *env, flags *flag.FlagSet, args []string) (any, error) {
+func bindRelease(flags *flag.FlagSet) action {
 	shutdown := flags.Bool("shutdown", false, "power the device off after releasing it")
 
-	leaseID, err := parseOneArg(flags, args, "lease-id")
-	if err != nil {
-		return nil, err
-	}
+	return func(ctx context.Context, environment *env, args []string) (any, error) {
+		leaseID, err := requireArg(args, "lease-id")
+		if err != nil {
+			return nil, err
+		}
 
-	return environment.pool.Release(ctx, leaseID, *shutdown)
+		return environment.pool.Release(ctx, leaseID, *shutdown)
+	}
 }
 
-func runCreate(ctx context.Context, environment *env, flags *flag.FlagSet, args []string) (any, error) {
+func bindCreate(flags *flag.FlagSet) action {
 	deviceType := flags.String("device-type", "", "device type identifier, name or unambiguous fragment")
 	runtime := flags.String("runtime", "", "runtime identifier, name or version (e.g. 26.5)")
 	platform := flags.String("platform", "ios", "platform to create on")
 
-	if err := parseNoArgs(flags, args); err != nil {
-		return nil, err
-	}
+	return func(ctx context.Context, environment *env, args []string) (any, error) {
+		if err := requireNoArgs(args); err != nil {
+			return nil, err
+		}
 
-	if err := requirePlatform(*platform); err != nil {
-		return nil, err
-	}
+		if err := requirePlatform(*platform); err != nil {
+			return nil, err
+		}
 
-	return environment.pool.Create(ctx, *deviceType, *runtime)
+		return environment.pool.Create(ctx, *deviceType, *runtime)
+	}
 }
 
-func runDelete(ctx context.Context, environment *env, flags *flag.FlagSet, args []string) (any, error) {
+func bindDelete(flags *flag.FlagSet) action {
 	force := flags.Bool("force", false, "delete a pool-owned device even while it is leased")
 
-	deviceID, err := parseOneArg(flags, args, "device-id")
-	if err != nil {
-		return nil, err
-	}
+	return func(ctx context.Context, environment *env, args []string) (any, error) {
+		deviceID, err := requireArg(args, "device-id")
+		if err != nil {
+			return nil, err
+		}
 
-	return environment.pool.Delete(ctx, deviceID, *force)
+		return environment.pool.Delete(ctx, deviceID, *force)
+	}
 }
 
-func runImport(ctx context.Context, environment *env, flags *flag.FlagSet, args []string) (any, error) {
+func bindImport(flags *flag.FlagSet) action {
 	undo := flags.Bool("undo", false, "stop the pool from handing this device out")
 
-	deviceID, err := parseOneArg(flags, args, "device-id")
-	if err != nil {
-		return nil, err
-	}
+	return func(ctx context.Context, environment *env, args []string) (any, error) {
+		deviceID, err := requireArg(args, "device-id")
+		if err != nil {
+			return nil, err
+		}
 
-	return environment.pool.Import(ctx, deviceID, *undo)
+		return environment.pool.Import(ctx, deviceID, *undo)
+	}
 }
 
-func runReclaim(ctx context.Context, environment *env, flags *flag.FlagSet, args []string) (any, error) {
+func bindReclaim(flags *flag.FlagSet) action {
 	force := flags.Bool("force", false, "reclaim even a lease that has not expired")
 
-	deviceID, err := parseOneArg(flags, args, "device-id")
-	if err != nil {
-		return nil, err
-	}
+	return func(ctx context.Context, environment *env, args []string) (any, error) {
+		deviceID, err := requireArg(args, "device-id")
+		if err != nil {
+			return nil, err
+		}
 
-	return environment.pool.Reclaim(ctx, deviceID, *force)
+		return environment.pool.Reclaim(ctx, deviceID, *force)
+	}
 }
 
-// parseFlags parses a command's own options and returns its positional
-// arguments. Commands register their flags inside run, so parsing happens there
-// rather than in the dispatcher.
+// parseFlags parses a command's options and returns its positional arguments.
 //
 // Options are accepted before and after the positional argument, because
 // `simpool renew <lease-id> --ttl 30m` is how people and agents actually write
@@ -249,24 +268,6 @@ func parseFlags(flags *flag.FlagSet, args []string) ([]string, error) {
 		positional = append(positional, remaining[0])
 		remaining = remaining[1:]
 	}
-}
-
-func parseNoArgs(flags *flag.FlagSet, args []string) error {
-	positional, err := parseFlags(flags, args)
-	if err != nil {
-		return err
-	}
-
-	return requireNoArgs(positional)
-}
-
-func parseOneArg(flags *flag.FlagSet, args []string, name string) (string, error) {
-	positional, err := parseFlags(flags, args)
-	if err != nil {
-		return "", err
-	}
-
-	return requireArg(positional, name)
 }
 
 func requireNoArgs(args []string) error {
