@@ -1,0 +1,150 @@
+package store
+
+import (
+	"context"
+	"time"
+
+	"github.com/strv/simpool/internal/errs"
+)
+
+// migrations are applied in order; each entry is one schema version. Existing
+// entries are immutable once released — add a new one instead.
+var migrations = []string{
+	`CREATE TABLE devices (
+		id          TEXT PRIMARY KEY,
+		platform    TEXT NOT NULL,
+		name        TEXT NOT NULL,
+		device_type TEXT NOT NULL,
+		runtime     TEXT NOT NULL,
+		state       TEXT NOT NULL,
+		provenance  TEXT NOT NULL,
+		borrowable  INTEGER NOT NULL DEFAULT 0,
+		available   INTEGER NOT NULL DEFAULT 1,
+		missing_at  TEXT,
+		created_at  TEXT NOT NULL,
+		updated_at  TEXT NOT NULL
+	)`,
+	`CREATE TABLE leases (
+		id             TEXT PRIMARY KEY,
+		device_id      TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+		borrower       TEXT NOT NULL,
+		worktree       TEXT,
+		metro_port     INTEGER,
+		acquired_at    TEXT NOT NULL,
+		expires_at     TEXT NOT NULL,
+		released_at    TEXT,
+		release_reason TEXT NOT NULL DEFAULT ''
+	)`,
+	// One live lease per device, enforced by the database rather than by
+	// application-level checks, so concurrent processes cannot both win.
+	`CREATE UNIQUE INDEX idx_leases_live_device ON leases(device_id) WHERE released_at IS NULL`,
+	`CREATE UNIQUE INDEX idx_leases_live_metro ON leases(metro_port)
+		WHERE released_at IS NULL AND metro_port IS NOT NULL`,
+	`CREATE INDEX idx_leases_device ON leases(device_id)`,
+	`CREATE TABLE operations (
+		id          TEXT PRIMARY KEY,
+		kind        TEXT NOT NULL,
+		state       TEXT NOT NULL,
+		device_id   TEXT,
+		device_name TEXT,
+		borrower    TEXT NOT NULL DEFAULT '',
+		started_at  TEXT NOT NULL,
+		expires_at  TEXT NOT NULL,
+		finished_at TEXT,
+		error       TEXT NOT NULL DEFAULT ''
+	)`,
+	`CREATE INDEX idx_operations_state ON operations(state)`,
+	// Lease metadata became free-form: the fixed worktree and Metro port
+	// columns are two keys among any the borrower cares to record.
+	`ALTER TABLE leases ADD COLUMN metadata TEXT NOT NULL DEFAULT '{}'`,
+	`UPDATE leases SET metadata = json_patch(
+		CASE WHEN worktree IS NOT NULL AND worktree <> ''
+			THEN json_object('worktree', worktree) ELSE '{}' END,
+		CASE WHEN metro_port IS NOT NULL
+			THEN json_object('metro_port', CAST(metro_port AS TEXT)) ELSE '{}' END
+	)`,
+	`DROP INDEX idx_leases_live_metro`,
+	`ALTER TABLE leases DROP COLUMN worktree`,
+	`ALTER TABLE leases DROP COLUMN metro_port`,
+	`CREATE UNIQUE INDEX idx_leases_live_metro
+		ON leases(json_extract(metadata, '$.metro_port'))
+		WHERE released_at IS NULL AND json_extract(metadata, '$.metro_port') IS NOT NULL`,
+}
+
+// SchemaVersion is the schema version this build expects.
+var SchemaVersion = len(migrations)
+
+func (s *Store) migrate(ctx context.Context) error {
+	const createVersions = `CREATE TABLE IF NOT EXISTS schema_migrations (
+		version    INTEGER PRIMARY KEY,
+		applied_at TEXT NOT NULL
+	)`
+
+	if _, err := s.conn.ExecContext(ctx, createVersions); err != nil {
+		return errs.Wrap(err, errs.CodeState, "creating migration table")
+	}
+
+	var applied int
+	if err := s.conn.QueryRowContext(ctx, `SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&applied); err != nil {
+		return errs.Wrap(err, errs.CodeState, "reading schema version")
+	}
+
+	if applied > len(migrations) {
+		return errs.New(
+			errs.CodeState,
+			"pool database is at schema version %d but this simpool build understands %d; upgrade simpool",
+			applied,
+			len(migrations),
+		)
+	}
+
+	for index := applied; index < len(migrations); index++ {
+		version := index + 1
+
+		if err := s.applyMigration(ctx, version, migrations[index]); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (s *Store) applyMigration(ctx context.Context, version int, statement string) error {
+	if _, err := s.conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return errs.Wrap(err, errs.CodeState, "starting migration %d", version)
+	}
+
+	rollback := func(cause error) error {
+		s.conn.ExecContext(ctx, "ROLLBACK")
+
+		return cause
+	}
+
+	if _, err := s.conn.ExecContext(ctx, statement); err != nil {
+		return rollback(errs.Wrap(err, errs.CodeState, "applying migration %d", version))
+	}
+
+	const record = `INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)`
+
+	if _, err := s.conn.ExecContext(ctx, record, version, formatTime(time.Now())); err != nil {
+		return rollback(errs.Wrap(err, errs.CodeState, "recording migration %d", version))
+	}
+
+	if _, err := s.conn.ExecContext(ctx, "COMMIT"); err != nil {
+		return errs.Wrap(err, errs.CodeState, "committing migration %d", version)
+	}
+
+	return nil
+}
+
+// AppliedSchemaVersion reports the schema version stored in the database.
+func (t *Tx) AppliedSchemaVersion(ctx context.Context) (int, error) {
+	var version int
+
+	err := t.conn.QueryRowContext(ctx, `SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version)
+	if err != nil {
+		return 0, errs.Wrap(err, errs.CodeState, "reading schema version")
+	}
+
+	return version, nil
+}
