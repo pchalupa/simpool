@@ -67,6 +67,11 @@ code, not on the message text:
 | `device_unmanaged` | The device was created by the user, not by simpool. It is protected. |
 | `provider_error`, `timeout` | Xcode or simctl failed. Report the message to the user rather than retrying blindly. |
 
+A device you could not borrow is not yours to use. When `acquire` fails and the
+table leaves nothing to try, stop and tell the user why. Do not fall back to a
+simulator you found yourself, not even the user's own: it may be another
+agent's, and a device nobody leased can be taken from you mid-task.
+
 ## Pool maintenance is not borrowing
 
 `create`, `delete`, `import` and `reclaim` change the pool itself. Run them when
