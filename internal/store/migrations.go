@@ -84,11 +84,39 @@ func (s *Store) migrate(ctx context.Context) error {
 		return errs.Wrap(err, errs.CodeState, "creating migration table")
 	}
 
-	var applied int
-	if err := s.conn.QueryRowContext(ctx, `SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&applied); err != nil {
-		return errs.Wrap(err, errs.CodeState, "reading schema version")
+	// Fast path: a warm database needs no write lock.
+	applied, err := (&Tx{conn: s.conn}).AppliedSchemaVersion(ctx)
+	if err != nil {
+		return err
 	}
 
+	if err := checkSchemaVersion(applied); err != nil || applied == len(migrations) {
+		return err
+	}
+
+	// Concurrent first runs all see a stale version above, so the version is
+	// read again under the write lock and only the winner applies anything.
+	return s.Write(ctx, func(tx *Tx) error {
+		applied, err := tx.AppliedSchemaVersion(ctx)
+		if err != nil {
+			return err
+		}
+
+		if err := checkSchemaVersion(applied); err != nil {
+			return err
+		}
+
+		for index := applied; index < len(migrations); index++ {
+			if err := tx.applyMigration(ctx, index+1, migrations[index]); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
+}
+
+func checkSchemaVersion(applied int) error {
 	if applied > len(migrations) {
 		return errs.New(
 			errs.CodeState,
@@ -98,40 +126,18 @@ func (s *Store) migrate(ctx context.Context) error {
 		)
 	}
 
-	for index := applied; index < len(migrations); index++ {
-		version := index + 1
-
-		if err := s.applyMigration(ctx, version, migrations[index]); err != nil {
-			return err
-		}
-	}
-
 	return nil
 }
 
-func (s *Store) applyMigration(ctx context.Context, version int, statement string) error {
-	if _, err := s.conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
-		return errs.Wrap(err, errs.CodeState, "starting migration %d", version)
-	}
-
-	rollback := func(cause error) error {
-		s.conn.ExecContext(ctx, "ROLLBACK")
-
-		return cause
-	}
-
-	if _, err := s.conn.ExecContext(ctx, statement); err != nil {
-		return rollback(errs.Wrap(err, errs.CodeState, "applying migration %d", version))
+func (t *Tx) applyMigration(ctx context.Context, version int, statement string) error {
+	if _, err := t.conn.ExecContext(ctx, statement); err != nil {
+		return errs.Wrap(err, errs.CodeState, "applying migration %d", version)
 	}
 
 	const record = `INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)`
 
-	if _, err := s.conn.ExecContext(ctx, record, version, formatTime(time.Now())); err != nil {
-		return rollback(errs.Wrap(err, errs.CodeState, "recording migration %d", version))
-	}
-
-	if _, err := s.conn.ExecContext(ctx, "COMMIT"); err != nil {
-		return errs.Wrap(err, errs.CodeState, "committing migration %d", version)
+	if _, err := t.conn.ExecContext(ctx, record, version, formatTime(time.Now())); err != nil {
+		return errs.Wrap(err, errs.CodeState, "recording migration %d", version)
 	}
 
 	return nil

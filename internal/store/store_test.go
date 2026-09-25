@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -45,6 +46,44 @@ func TestMigrationsAreIdempotentAcrossProcesses(t *testing.T) {
 		})
 		if err != nil {
 			t.Fatalf("reading schema version: %v", err)
+		}
+	}
+}
+
+func TestConcurrentFirstOpenAppliesMigrationsOnce(t *testing.T) {
+	const processes = 8
+
+	for run := 0; run < 10; run++ {
+		path := filepath.Join(t.TempDir(), "pool.db")
+		start := make(chan struct{})
+		failures := make(chan error, processes)
+
+		var wg sync.WaitGroup
+
+		for range processes {
+			wg.Add(1)
+
+			go func() {
+				defer wg.Done()
+				<-start
+
+				state, err := store.Open(context.Background(), path)
+				if err != nil {
+					failures <- err
+
+					return
+				}
+
+				state.Close()
+			}()
+		}
+
+		close(start)
+		wg.Wait()
+		close(failures)
+
+		for err := range failures {
+			t.Errorf("run %d: opening a fresh store concurrently: %v", run, err)
 		}
 	}
 }

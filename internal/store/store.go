@@ -14,12 +14,18 @@ import (
 
 	"github.com/strv/simpool/internal/errs"
 
-	_ "modernc.org/sqlite" // pure-Go driver: no C toolchain needed to install simpool
+	"modernc.org/sqlite" // pure-Go driver: no C toolchain needed to install simpool
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 // timeLayout is the storage format for every timestamp: UTC RFC3339 with
 // nanoseconds, which sorts lexicographically.
 const timeLayout = "2006-01-02T15:04:05.000000000Z07:00"
+
+const (
+	busyTimeout   = 10 * time.Second
+	walRetryDelay = 10 * time.Millisecond
+)
 
 // Store is a handle on the pool database. A CLI invocation opens exactly one.
 type Store struct {
@@ -34,9 +40,13 @@ func Open(ctx context.Context, path string) (*Store, error) {
 		return nil, errs.Wrap(err, errs.CodeState, "creating state directory %q", filepath.Dir(path))
 	}
 
+	// journal_mode is not a DSN pragma: on a fresh file several processes
+	// switching to WAL at once get SQLITE_BUSY without the busy handler
+	// running, so enableWAL retries it after connecting.
 	dsn := fmt.Sprintf(
-		"file:%s?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_pragma=synchronous(NORMAL)",
+		"file:%s?_pragma=busy_timeout(%d)&_pragma=foreign_keys(1)&_pragma=synchronous(NORMAL)",
 		path,
+		busyTimeout.Milliseconds(),
 	)
 
 	db, err := sql.Open("sqlite", dsn)
@@ -61,6 +71,12 @@ func Open(ctx context.Context, path string) (*Store, error) {
 		path: path,
 	}
 
+	if err := store.enableWAL(ctx); err != nil {
+		store.Close()
+
+		return nil, err
+	}
+
 	if err := store.migrate(ctx); err != nil {
 		store.Close()
 
@@ -73,6 +89,33 @@ func Open(ctx context.Context, path string) (*Store, error) {
 // Path returns the database file location.
 func (s *Store) Path() string {
 	return s.path
+}
+
+func (s *Store) enableWAL(ctx context.Context) error {
+	deadline := time.Now().Add(busyTimeout)
+
+	for {
+		_, err := s.conn.ExecContext(ctx, "PRAGMA journal_mode=WAL")
+		if err == nil {
+			return nil
+		}
+
+		if !isBusy(err) || time.Now().After(deadline) {
+			return errs.Wrap(err, errs.CodeState, "enabling WAL on pool database %q", s.path)
+		}
+
+		select {
+		case <-ctx.Done():
+			return errs.Wrap(ctx.Err(), errs.CodeState, "enabling WAL on pool database %q", s.path)
+		case <-time.After(walRetryDelay):
+		}
+	}
+}
+
+func isBusy(err error) bool {
+	var sqliteErr *sqlite.Error
+
+	return errors.As(err, &sqliteErr) && sqliteErr.Code()&0xff == sqlite3.SQLITE_BUSY
 }
 
 func (s *Store) Close() error {
