@@ -35,12 +35,17 @@ type command struct {
 	name    string
 	summary string
 	usage   string
-	// run parses the command's own flags and performs the work. It returns a
-	// value to render, or a coded error.
-	run func(ctx context.Context, env *env, flags *flag.FlagSet, args []string) (any, error)
+	// bind registers the command's own flags and returns the action to run once
+	// they are parsed. Keeping registration apart from the work lets the
+	// dispatcher know --json before anything else can fail.
+	bind func(flags *flag.FlagSet) action
 	// needsPool is false for commands that must work without a database or Xcode.
 	needsPool bool
 }
+
+// action performs a command with its positional arguments. It returns a value
+// to render, or a coded error.
+type action func(ctx context.Context, env *env, args []string) (any, error)
 
 // Run executes one CLI invocation and returns the process exit status.
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -79,46 +84,31 @@ func runCommand(ctx context.Context, cmd command, args []string, stdout, stderr 
 	flags.SetOutput(stderr)
 
 	asJSON := flags.Bool("json", false, "emit a machine-readable JSON document")
+	act := cmd.bind(flags)
 
 	flags.Usage = func() {
 		fmt.Fprintf(stderr, "Usage: simpool %s\n\n%s\n\nOptions:\n", cmd.usage, cmd.summary)
 		flags.PrintDefaults()
 	}
 
+	// Options are parsed before any setup, so a failure to load the config or
+	// open the database is still rendered in the format the caller asked for.
+	positional, err := parseFlags(flags, args)
+
 	environment := &env{
 		stdout: stdout,
 		stderr: stderr,
+		json:   *asJSON,
 	}
-
-	result, err := func() (any, error) {
-		cfg, err := config.Load()
-		if err != nil {
-			return nil, err
-		}
-
-		environment.cfg = cfg
-
-		if !cmd.needsPool {
-			return cmd.run(ctx, environment, flags, args)
-		}
-
-		state, err := store.Open(ctx, cfg.DatabasePath)
-		if err != nil {
-			return nil, err
-		}
-		defer state.Close()
-
-		environment.pool = pool.New(cfg, state, newProvider(cfg))
-
-		return cmd.run(ctx, environment, flags, args)
-	}()
-
-	// The command parses its own flags, so --json is only known once it ran.
-	environment.json = *asJSON
 
 	// `--help` is handled by the flag package, which already printed the usage.
 	if errors.Is(err, flag.ErrHelp) {
 		return errs.ExitOK
+	}
+
+	var result any
+	if err == nil {
+		result, err = execute(ctx, cmd.needsPool, act, environment, positional)
 	}
 
 	if err != nil {
@@ -134,6 +124,31 @@ func runCommand(ctx context.Context, cmd command, args []string, stdout, stderr 
 	}
 
 	return exitStatusFor(result)
+}
+
+// execute loads the configuration, opens the pool when the command needs it,
+// and runs the action.
+func execute(ctx context.Context, needsPool bool, act action, environment *env, args []string) (any, error) {
+	cfg, err := config.Load()
+	if err != nil {
+		return nil, err
+	}
+
+	environment.cfg = cfg
+
+	if !needsPool {
+		return act(ctx, environment, args)
+	}
+
+	state, err := store.Open(ctx, cfg.DatabasePath)
+	if err != nil {
+		return nil, err
+	}
+	defer state.Close()
+
+	environment.pool = pool.New(cfg, state, newProvider(cfg))
+
+	return act(ctx, environment, args)
 }
 
 // newProvider selects the platform implementation. Additional platforms plug in
