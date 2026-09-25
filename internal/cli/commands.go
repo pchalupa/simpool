@@ -6,9 +6,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/strv/simpool/internal/errs"
-	"github.com/strv/simpool/internal/pool"
-	"github.com/strv/simpool/internal/provider"
+	"github.com/pchalupa/simpool/internal/errs"
+	"github.com/pchalupa/simpool/internal/pool"
+	"github.com/pchalupa/simpool/internal/provider"
 )
 
 // commands is the CLI surface. Mutating lease operations take the lease ID: a

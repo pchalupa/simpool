@@ -6,8 +6,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/strv/simpool/internal/config"
-	"github.com/strv/simpool/internal/store"
+	"github.com/pchalupa/simpool/internal/config"
+	"github.com/pchalupa/simpool/internal/store"
 )
 
 // Check statuses reported by doctor.

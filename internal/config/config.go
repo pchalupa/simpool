@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/strv/simpool/internal/errs"
+	"github.com/pchalupa/simpool/internal/errs"
 )
 
 // Environment variables recognised by simpool.

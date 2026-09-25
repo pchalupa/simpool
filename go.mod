@@ -1,4 +1,4 @@
-module github.com/strv/simpool
+module github.com/pchalupa/simpool
 
 go 1.25.0
 

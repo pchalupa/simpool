@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/strv/simpool/internal/errs"
+	"github.com/pchalupa/simpool/internal/errs"
 )
 
 // migrations are applied in order; each entry is one schema version. Existing

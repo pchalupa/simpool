@@ -3,11 +3,11 @@ package pool
 import (
 	"context"
 
-	"github.com/strv/simpool/internal/config"
+	"github.com/pchalupa/simpool/internal/config"
 
-	"github.com/strv/simpool/internal/errs"
-	"github.com/strv/simpool/internal/provider"
-	"github.com/strv/simpool/internal/store"
+	"github.com/pchalupa/simpool/internal/errs"
+	"github.com/pchalupa/simpool/internal/provider"
+	"github.com/pchalupa/simpool/internal/store"
 )
 
 // CreateResult reports a pool-owned device that was just created.

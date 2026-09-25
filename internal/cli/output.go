@@ -9,9 +9,9 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/strv/simpool/internal/errs"
-	"github.com/strv/simpool/internal/pool"
-	"github.com/strv/simpool/internal/store"
+	"github.com/pchalupa/simpool/internal/errs"
+	"github.com/pchalupa/simpool/internal/pool"
+	"github.com/pchalupa/simpool/internal/store"
 )
 
 // response is the JSON envelope every command emits with --json.

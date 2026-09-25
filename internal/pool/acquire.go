@@ -4,9 +4,9 @@ import (
 	"context"
 	"time"
 
-	"github.com/strv/simpool/internal/errs"
-	"github.com/strv/simpool/internal/provider"
-	"github.com/strv/simpool/internal/store"
+	"github.com/pchalupa/simpool/internal/errs"
+	"github.com/pchalupa/simpool/internal/provider"
+	"github.com/pchalupa/simpool/internal/store"
 )
 
 // AcquireRequest describes the device an agent wants to borrow. Metadata is

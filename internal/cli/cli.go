@@ -11,12 +11,12 @@ import (
 	"runtime"
 	"sort"
 
-	"github.com/strv/simpool/internal/config"
-	"github.com/strv/simpool/internal/errs"
-	"github.com/strv/simpool/internal/pool"
-	"github.com/strv/simpool/internal/provider"
-	"github.com/strv/simpool/internal/provider/ios"
-	"github.com/strv/simpool/internal/store"
+	"github.com/pchalupa/simpool/internal/config"
+	"github.com/pchalupa/simpool/internal/errs"
+	"github.com/pchalupa/simpool/internal/pool"
+	"github.com/pchalupa/simpool/internal/provider"
+	"github.com/pchalupa/simpool/internal/provider/ios"
+	"github.com/pchalupa/simpool/internal/store"
 )
 
 // Version is the build version, overridden at link time.

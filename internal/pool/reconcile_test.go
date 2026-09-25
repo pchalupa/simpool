@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/strv/simpool/internal/store"
+	"github.com/pchalupa/simpool/internal/store"
 )
 
 // TestReconcileAdoptsADeviceLeftByAKilledProcess covers the case the operation

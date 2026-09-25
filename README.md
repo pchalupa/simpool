@@ -16,7 +16,7 @@ same simulator, install over each other's builds, and start Metro twice on port
 ## Install
 
 ```bash
-go install github.com/strv/simpool/cmd/simpool@latest
+go install github.com/pchalupa/simpool/cmd/simpool@latest
 ```
 
 Or build from a checkout:

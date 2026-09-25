@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/strv/simpool/internal/errs"
-	"github.com/strv/simpool/internal/store"
+	"github.com/pchalupa/simpool/internal/errs"
+	"github.com/pchalupa/simpool/internal/store"
 )
 
 func openTestStore(t *testing.T, path string) *store.Store {

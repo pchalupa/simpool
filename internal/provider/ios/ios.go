@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/strv/simpool/internal/errs"
-	"github.com/strv/simpool/internal/provider"
+	"github.com/pchalupa/simpool/internal/errs"
+	"github.com/pchalupa/simpool/internal/provider"
 )
 
 // runtimePrefix identifies the iOS runtimes this provider manages; watchOS,

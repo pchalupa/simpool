@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/strv/simpool/internal/errs"
-	"github.com/strv/simpool/internal/provider"
+	"github.com/pchalupa/simpool/internal/errs"
+	"github.com/pchalupa/simpool/internal/provider"
 )
 
 // Provider is a scriptable stand-in for a platform toolchain.

@@ -8,12 +8,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/strv/simpool/internal/config"
-	"github.com/strv/simpool/internal/errs"
-	"github.com/strv/simpool/internal/pool"
-	"github.com/strv/simpool/internal/provider"
-	"github.com/strv/simpool/internal/provider/fake"
-	"github.com/strv/simpool/internal/store"
+	"github.com/pchalupa/simpool/internal/config"
+	"github.com/pchalupa/simpool/internal/errs"
+	"github.com/pchalupa/simpool/internal/pool"
+	"github.com/pchalupa/simpool/internal/provider"
+	"github.com/pchalupa/simpool/internal/provider/fake"
+	"github.com/pchalupa/simpool/internal/store"
 )
 
 // clock is a test time source that only moves when a test moves it.

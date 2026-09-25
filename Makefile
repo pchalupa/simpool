@@ -1,6 +1,6 @@
 BINARY := bin/simpool
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-LDFLAGS := -X github.com/strv/simpool/internal/cli.Version=$(VERSION)
+LDFLAGS := -X github.com/pchalupa/simpool/internal/cli.Version=$(VERSION)
 
 .PHONY: build install test lint fmt clean eval eval-race
 

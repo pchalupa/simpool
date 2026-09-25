@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/strv/simpool/internal/errs"
+	"github.com/pchalupa/simpool/internal/errs"
 )
 
 const deviceColumns = `id, platform, name, device_type, runtime, state, provenance,

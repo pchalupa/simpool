@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/strv/simpool/internal/errs"
-	"github.com/strv/simpool/internal/store"
+	"github.com/pchalupa/simpool/internal/errs"
+	"github.com/pchalupa/simpool/internal/store"
 )
 
 // Limits on the metadata bag. It is a place for a borrower to record what it is

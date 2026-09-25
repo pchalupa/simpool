@@ -7,7 +7,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/strv/simpool/internal/cli"
+	"github.com/pchalupa/simpool/internal/cli"
 )
 
 func main() {

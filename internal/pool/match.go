@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/strv/simpool/internal/errs"
-	"github.com/strv/simpool/internal/provider"
+	"github.com/pchalupa/simpool/internal/errs"
+	"github.com/pchalupa/simpool/internal/provider"
 )
 
 // resolveDeviceType maps a user-supplied device type — an identifier, a display

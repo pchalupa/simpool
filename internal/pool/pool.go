@@ -10,10 +10,10 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/strv/simpool/internal/config"
-	"github.com/strv/simpool/internal/errs"
-	"github.com/strv/simpool/internal/provider"
-	"github.com/strv/simpool/internal/store"
+	"github.com/pchalupa/simpool/internal/config"
+	"github.com/pchalupa/simpool/internal/errs"
+	"github.com/pchalupa/simpool/internal/provider"
+	"github.com/pchalupa/simpool/internal/store"
 )
 
 // namePrefix marks simulators simpool created. The suffix is the identifier of

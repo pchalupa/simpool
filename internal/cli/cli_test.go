@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/strv/simpool/internal/cli"
-	"github.com/strv/simpool/internal/config"
-	"github.com/strv/simpool/internal/errs"
+	"github.com/pchalupa/simpool/internal/cli"
+	"github.com/pchalupa/simpool/internal/config"
+	"github.com/pchalupa/simpool/internal/errs"
 )
 
 type envelope struct {

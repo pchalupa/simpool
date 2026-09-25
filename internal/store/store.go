@@ -12,7 +12,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/strv/simpool/internal/errs"
+	"github.com/pchalupa/simpool/internal/errs"
 
 	"modernc.org/sqlite" // pure-Go driver: no C toolchain needed to install simpool
 	sqlite3 "modernc.org/sqlite/lib"
