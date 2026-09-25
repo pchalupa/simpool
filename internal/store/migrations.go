@@ -23,25 +23,31 @@ var migrations = []string{
 		missing_at  TEXT,
 		created_at  TEXT NOT NULL,
 		updated_at  TEXT NOT NULL
-	)`,
-	`CREATE TABLE leases (
+	);
+
+	CREATE TABLE leases (
 		id             TEXT PRIMARY KEY,
 		device_id      TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
 		borrower       TEXT NOT NULL,
-		worktree       TEXT,
-		metro_port     INTEGER,
+		metadata       TEXT NOT NULL DEFAULT '{}',
 		acquired_at    TEXT NOT NULL,
 		expires_at     TEXT NOT NULL,
 		released_at    TEXT,
 		release_reason TEXT NOT NULL DEFAULT ''
-	)`,
-	// One live lease per device, enforced by the database rather than by
-	// application-level checks, so concurrent processes cannot both win.
-	`CREATE UNIQUE INDEX idx_leases_live_device ON leases(device_id) WHERE released_at IS NULL`,
-	`CREATE UNIQUE INDEX idx_leases_live_metro ON leases(metro_port)
-		WHERE released_at IS NULL AND metro_port IS NOT NULL`,
-	`CREATE INDEX idx_leases_device ON leases(device_id)`,
-	`CREATE TABLE operations (
+	);
+
+	-- One live lease per device, and one live lease per Metro port, enforced by
+	-- the database rather than by application-level checks, so concurrent
+	-- processes cannot both win.
+	CREATE UNIQUE INDEX idx_leases_live_device ON leases(device_id) WHERE released_at IS NULL;
+
+	CREATE UNIQUE INDEX idx_leases_live_metro
+		ON leases(json_extract(metadata, '$.metro_port'))
+		WHERE released_at IS NULL AND json_extract(metadata, '$.metro_port') IS NOT NULL;
+
+	CREATE INDEX idx_leases_device ON leases(device_id);
+
+	CREATE TABLE operations (
 		id          TEXT PRIMARY KEY,
 		kind        TEXT NOT NULL,
 		state       TEXT NOT NULL,
@@ -52,23 +58,9 @@ var migrations = []string{
 		expires_at  TEXT NOT NULL,
 		finished_at TEXT,
 		error       TEXT NOT NULL DEFAULT ''
-	)`,
-	`CREATE INDEX idx_operations_state ON operations(state)`,
-	// Lease metadata became free-form: the fixed worktree and Metro port
-	// columns are two keys among any the borrower cares to record.
-	`ALTER TABLE leases ADD COLUMN metadata TEXT NOT NULL DEFAULT '{}'`,
-	`UPDATE leases SET metadata = json_patch(
-		CASE WHEN worktree IS NOT NULL AND worktree <> ''
-			THEN json_object('worktree', worktree) ELSE '{}' END,
-		CASE WHEN metro_port IS NOT NULL
-			THEN json_object('metro_port', CAST(metro_port AS TEXT)) ELSE '{}' END
-	)`,
-	`DROP INDEX idx_leases_live_metro`,
-	`ALTER TABLE leases DROP COLUMN worktree`,
-	`ALTER TABLE leases DROP COLUMN metro_port`,
-	`CREATE UNIQUE INDEX idx_leases_live_metro
-		ON leases(json_extract(metadata, '$.metro_port'))
-		WHERE released_at IS NULL AND json_extract(metadata, '$.metro_port') IS NOT NULL`,
+	);
+
+	CREATE INDEX idx_operations_state ON operations(state);`,
 }
 
 // SchemaVersion is the schema version this build expects.

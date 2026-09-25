@@ -11,8 +11,7 @@
           "acquire",
           "--create-if-needed",
           "--meta",
-          "worktree=/Users/someone/other-checkout",
-          "--json"
+          "worktree=/Users/someone/other-checkout"
         ],
         "capture": "other"
       }

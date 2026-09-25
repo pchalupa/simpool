@@ -18,10 +18,10 @@ ends. A simulator you picked yourself may already belong to another agent.
 1. **Check it is installed:** `command -v simpool`. If it is absent, tell the
    user simpool is not installed and continue with your usual simulator
    workflow; do not install it yourself.
-2. **Acquire**, always with `--json`:
+2. **Acquire**:
 
    ```bash
-   simpool acquire --create-if-needed --json
+   simpool acquire --create-if-needed
    ```
 
    Record `data.device.id` and `data.lease.id` from the response. Add
@@ -31,7 +31,7 @@ ends. A simulator you picked yourself may already belong to another agent.
 
    ```bash
    simpool acquire --create-if-needed \
-     --meta worktree="$PWD" --meta metro-port=8081 --json
+     --meta worktree="$PWD" --meta metro-port=8081
    ```
 
    `--meta metro-port=` claims the port, so record it only when you will
@@ -42,20 +42,20 @@ ends. A simulator you picked yourself may already belong to another agent.
    it to argent, `xcrun simctl`, `npx react-native run-ios --udid`, or
    `xcodebuild -destination "id=<device-id>"`. The device is already booted
    unless you passed `--no-boot`.
-4. **Renew** while the work continues: `simpool renew <lease-id> --json`. Leases
+4. **Renew** while the work continues: `simpool renew <lease-id>`. Leases
    expire (two hours by default) and an expired lease is handed to the next
    agent, so renew before a long build or test run rather than after it. Renew
    also merges metadata, which is how you record a Metro port once Metro is
    actually running: `simpool renew <lease-id> --meta metro-port=8081`.
 5. **Release** when the task ends, including when it fails:
-   `simpool release <lease-id> --json`. Releasing twice is safe. The device is
+   `simpool release <lease-id>`. Releasing twice is safe. The device is
    left booted for the next borrower; add `--shutdown` only if the user asked
    for a cold device.
 
 ## Reading failures
 
-Every command exits non-zero with a stable `error.code` in its JSON. Act on the
-code, not on the message text:
+Every command prints a JSON document. A failure exits non-zero with a stable
+`error.code`. Act on the code, not on the message text:
 
 | code | what to do |
 | --- | --- |
@@ -86,7 +86,6 @@ the user asks for them, not as a way around a failed acquire:
 - `simpool reclaim <device-id>` frees a device whose borrower is gone. Without
   `--force` it only touches leases that have already expired.
 
-`simpool list` and `simpool inspect <device-id>` show who holds what, and
-`simpool doctor` explains an unhealthy pool.
+`simpool list` shows who holds what.
 
 Run `simpool <command> --help` for the full option list.

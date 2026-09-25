@@ -47,9 +47,9 @@ func TestReconcileAdoptsADeviceLeftByAKilledProcess(t *testing.T) {
 		t.Fatalf("expected %s to be adopted, got %+v", orphan.ID, report.AdoptedDevices)
 	}
 
-	view, err := h.pool.Inspect(ctx, orphan.ID)
-	if err != nil {
-		t.Fatalf("inspect: %v", err)
+	view, found := findDevice(t, h.pool, orphan.ID)
+	if !found {
+		t.Fatalf("device %s is not in the pool", orphan.ID)
 	}
 
 	if !view.Device.Managed() || !view.Device.Borrowable {

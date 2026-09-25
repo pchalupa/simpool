@@ -5,14 +5,14 @@
   "world": {
     "max_devices": 4,
     "seed": [
-      {"as": "agent-b", "run": ["acquire", "--create-if-needed", "--meta", "metro-port=8081", "--meta", "worktree=/Users/someone/other-checkout", "--json"], "capture": "other"}
+      {"as": "agent-b", "run": ["acquire", "--create-if-needed", "--meta", "metro-port=8081", "--meta", "worktree=/Users/someone/other-checkout"], "capture": "other"}
     ],
     "files": {
       "package.json": "{\n  \"name\": \"demo-app\",\n  \"scripts\": { \"start\": \"react-native start\" },\n  \"dependencies\": { \"react-native\": \"0.76.0\" }\n}\n"
     }
   },
   "checks": [
-    {"id": "2.1", "kind": "ran", "cmd": "acquire", "flags": ["--json"], "succeeded": true, "min": 1, "text": "Ended up with a simulator despite the first attempt colliding"},
+    {"id": "2.1", "kind": "ran", "cmd": "acquire", "succeeded": true, "min": 1, "text": "Ended up with a simulator despite the first attempt colliding"},
     {"id": "2.2", "kind": "lease_metadata", "not_equals": {"metro_port": "8081"}, "present": ["metro_port"], "weight": 3, "text": "Claimed a free Metro port, not the one agent-b holds"},
     {"id": "2.3", "kind": "no_blind_retry", "code": "metro_port_conflict", "weight": 2, "text": "Changed the command after metro_port_conflict instead of repeating it"},
     {"id": "2.4", "kind": "never_ran", "cmd": "reclaim", "weight": 2, "text": "Did not reclaim another agent's lease to get the port"},

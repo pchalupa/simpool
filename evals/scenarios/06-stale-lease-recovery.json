@@ -5,8 +5,8 @@
   "world": {
     "max_devices": 4,
     "seed": [
-      {"as": "previous-session", "run": ["acquire", "--create-if-needed", "--json"], "capture": "stale"},
-      {"as": "operator", "run": ["reclaim", "{{stale.data.device.id}}", "--force", "--json"]}
+      {"as": "previous-session", "run": ["acquire", "--create-if-needed"], "capture": "stale"},
+      {"as": "operator", "run": ["reclaim", "{{stale.data.device.id}}", "--force"]}
     ],
     "files": {
       "smoke.sh": "#!/usr/bin/env bash\nset -euo pipefail\nudid=\"${1:-}\"\n[ -n \"$udid\" ] || { echo 'usage: smoke.sh <udid>' >&2; exit 2; }\necho \"smoke.sh ran against $udid\" >>\"${WORK_LOG:-/dev/null}\"\necho 'SMOKE OK'\n"

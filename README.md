@@ -26,8 +26,7 @@ make build      # writes ./bin/simpool
 make install    # go install into $GOBIN
 ```
 
-You need macOS with Xcode and at least one simulator runtime installed. Check
-the setup with `simpool doctor`.
+You need macOS with Xcode and at least one simulator runtime installed.
 
 Installing the agent skill does not install the binary. Both steps are separate,
 see [Agent skill](#agent-skill).
@@ -36,7 +35,7 @@ see [Agent skill](#agent-skill).
 
 ```bash
 # borrow a simulator, creating one if the pool has none free
-simpool acquire --create-if-needed --json
+simpool acquire --create-if-needed
 
 # work with the device ID the command returned
 xcrun simctl install <device-id> MyApp.app
@@ -53,18 +52,17 @@ serve on, so another agent does not take the same port:
 
 ```bash
 simpool acquire --create-if-needed \
-  --meta worktree="$PWD" --meta metro-port=8081 --json
+  --meta worktree="$PWD" --meta metro-port=8081
 ```
 
-`--json` prints a stable document with `ok`, `data` and `error` fields. Agents
-should always use it; the plain output is for humans.
+Every command prints one JSON document on stdout with `ok`, `command` and
+either `data` or `error`. Failures are JSON too, so a caller reads one stream.
 
 ## Commands
 
 | Command | What it does |
 | --- | --- |
 | `list` | Every device the pool knows, with its lease |
-| `inspect <device-id>` | One device: provenance, state, lease |
 | `acquire` | Reserve a matching device and return its device and lease IDs |
 | `renew <lease-id>` | Extend a live lease |
 | `release <lease-id>` | Free a lease |
@@ -73,7 +71,6 @@ should always use it; the plain output is for humans.
 | `import <device-id>` | Let the pool hand out a simulator you created |
 | `reclaim <device-id>` | Free a device whose borrower is gone |
 | `shutdown <device-id>` | Power a device off |
-| `doctor` | Check Xcode, the state directory and pool health |
 
 Run `simpool <command> --help` for options.
 
@@ -138,7 +135,7 @@ Every device is either **pool-owned** (created by `simpool`, named
 - External simulators are never deleted by `simpool`, with or without `--force`.
 - `delete` only removes pool-owned devices, and refuses while a lease is live
   unless you pass `--force`.
-- `list` and `inspect` show which is which in the `OWNER` column.
+- `list` shows which is which in each device's `provenance` field.
 
 `SIMPOOL_MAX_DEVICES` (default 4) bounds how many pool-owned devices can exist.
 `acquire --create-if-needed` returns `no_capacity` at the limit instead of
@@ -185,7 +182,7 @@ Each failure carries a stable `error.code` in JSON and a matching exit status:
 | Exit | Meaning | Codes |
 | --- | --- | --- |
 | 0 | Success | |
-| 1 | Internal or state error, or an unhealthy `doctor` | `internal_error`, `state_error` |
+| 1 | Internal or state error | `internal_error`, `state_error` |
 | 2 | Bad arguments | `invalid_args` |
 | 3 | Unknown device or lease | `device_not_found`, `lease_not_found` |
 | 4 | Conflict | `device_leased`, `device_unmanaged`, `lease_not_live`, `metro_port_conflict` |
@@ -210,7 +207,7 @@ so install `simpool` separately and make sure it is on `PATH`.
 
 ```
 cmd/simpool          entry point
-internal/cli         argument parsing, JSON and human output
+internal/cli         argument parsing and JSON output
 internal/pool        leasing, capacity, reconciliation
 internal/store       SQLite schema, migrations, queries
 internal/provider    the platform boundary

@@ -46,7 +46,7 @@ fan_out() {
   local count="$1" dir="$2"; shift 2
   rm -rf "$dir"; mkdir -p "$dir"
   for index in $(seq 1 "$count"); do
-    ( SIMPOOL_BORROWER="agent-$index" "$SP" "$@" --json >"$dir/$index.json" 2>"$dir/$index.err" ) &
+    ( SIMPOOL_BORROWER="agent-$index" "$SP" "$@" >"$dir/$index.json" 2>"$dir/$index.err" ) &
   done
   wait
 }
@@ -126,17 +126,17 @@ if want "expiry"; then
   echo "── expiry: a lapsed lease frees the device and the old ID goes inert"
   fresh expiry
   export SIMPOOL_MAX_DEVICES=1
-  old=$(SIMPOOL_LEASE_TTL=1s SIMPOOL_BORROWER=agent-gone "$SP" acquire --create-if-needed --json | jq -r '.data.lease.id')
+  old=$(SIMPOOL_LEASE_TTL=1s SIMPOOL_BORROWER=agent-gone "$SP" acquire --create-if-needed | jq -r '.data.lease.id')
   sleep 2
-  second=$(SIMPOOL_BORROWER=agent-next "$SP" acquire --json)
+  second=$(SIMPOOL_BORROWER=agent-next "$SP" acquire)
   assert_eq "true" "$(echo "$second" | jq -r '.ok')" "the next agent got the device once the lease lapsed"
 
-  renewed=$("$SP" renew "$old" --json)
+  renewed=$("$SP" renew "$old")
   assert_eq "lease_not_live" "$(echo "$renewed" | jq -r '.error.code')" "the lapsed lease ID cannot be renewed"
 
-  released=$("$SP" release "$old" --json)
+  released=$("$SP" release "$old")
   assert_eq "false" "$(echo "$released" | jq -r '.data.released')" "releasing with the lapsed ID does not touch the new borrower's lease"
-  assert_eq "$(echo "$second" | jq -r '.data.lease.id')" "$("$SP" list --json | jq -r '.data[0].lease.id')" "the live lease still belongs to the new borrower"
+  assert_eq "$(echo "$second" | jq -r '.data.lease.id')" "$("$SP" list | jq -r '.data[0].lease.id')" "the live lease still belongs to the new borrower"
   unset SIMPOOL_MAX_DEVICES
   echo
 fi
@@ -144,27 +144,27 @@ fi
 if want "double-release"; then
   echo "── double-release: two processes release the same lease at once"
   fresh double-release
-  lease=$("$SP" acquire --create-if-needed --json | jq -r '.data.lease.id')
-  ( "$SP" release "$lease" --json >"$ROOT/double-release/a.json" 2>&1 ) &
-  ( "$SP" release "$lease" --json >"$ROOT/double-release/b.json" 2>&1 ) &
+  lease=$("$SP" acquire --create-if-needed | jq -r '.data.lease.id')
+  ( "$SP" release "$lease" >"$ROOT/double-release/a.json" 2>&1 ) &
+  ( "$SP" release "$lease" >"$ROOT/double-release/b.json" 2>&1 ) &
   wait
   oks=$(jq -s '[.[] | select(.ok)] | length' "$ROOT/double-release/a.json" "$ROOT/double-release/b.json")
   assert_eq "2" "$oks" "releasing twice is safe, not an error"
-  assert_eq "null" "$("$SP" list --json | jq -r '.data[0].lease')" "the device ended up free"
+  assert_eq "null" "$("$SP" list | jq -r '.data[0].lease')" "the device ended up free"
   echo
 fi
 
 if want "vanished-device"; then
   echo "── vanished-device: a simulator deleted outside simpool is not handed out"
   fresh vanished-device
-  device=$("$SP" acquire --create-if-needed --json | jq -r '.data.device.id')
-  lease=$("$SP" list --json | jq -r '.data[0].lease.id')
+  device=$("$SP" acquire --create-if-needed | jq -r '.data.device.id')
+  lease=$("$SP" list | jq -r '.data[0].lease.id')
   xcrun simctl delete "$device" >/dev/null 2>&1
 
-  after=$("$SP" list --json)
+  after=$("$SP" list)
   assert_eq "true" "$(echo "$after" | jq -r --arg d "$device" '[.data[] | select(.device.id == $d) | .device.missing_at != null] | first // false')" "the device is marked missing"
   assert_eq "null" "$(echo "$after" | jq -r --arg d "$device" '[.data[] | select(.device.id == $d) | .lease] | first')" "its lease was closed"
-  assert_eq "lease_not_live" "$("$SP" renew "$lease" --json | jq -r '.error.code')" "the borrower's lease ID is inert"
+  assert_eq "lease_not_live" "$("$SP" renew "$lease" | jq -r '.error.code')" "the borrower's lease ID is inert"
   echo
 fi
 
@@ -174,8 +174,8 @@ if want "external-device"; then
   export SIMPOOL_MAX_DEVICES=0
   personal=$(xcrun simctl create "Petr iPhone" com.apple.CoreSimulator.SimDeviceType.iPhone-17 com.apple.CoreSimulator.SimRuntime.iOS-27-0)
 
-  assert_eq "false" "$("$SP" acquire --create-if-needed --json | jq -r '.ok')" "acquire refuses to borrow it"
-  assert_eq "device_unmanaged" "$("$SP" delete "$personal" --force --json | jq -r '.error.code')" "delete --force still refuses to remove it"
+  assert_eq "false" "$("$SP" acquire --create-if-needed | jq -r '.ok')" "acquire refuses to borrow it"
+  assert_eq "device_unmanaged" "$("$SP" delete "$personal" --force | jq -r '.error.code')" "delete --force still refuses to remove it"
   assert_eq "true" "$(xcrun simctl list -j devices | jq -r --arg d "$personal" '[.devices[][] | select(.udid == $d)] | length > 0')" "the user's simulator still exists"
   unset SIMPOOL_MAX_DEVICES
   echo

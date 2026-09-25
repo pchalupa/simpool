@@ -1,5 +1,5 @@
 // Package cli turns command-line arguments into pool operations and renders the
-// result as either a human table or a stable JSON document.
+// result as a stable JSON document.
 package cli
 
 import (
@@ -24,11 +24,8 @@ var Version = "dev"
 
 // env is the per-invocation context handed to a command implementation.
 type env struct {
-	stdout io.Writer
-	stderr io.Writer
-	cfg    config.Config
-	pool   *pool.Pool
-	json   bool
+	cfg  config.Config
+	pool *pool.Pool
 }
 
 type command struct {
@@ -36,8 +33,7 @@ type command struct {
 	summary string
 	usage   string
 	// bind registers the command's own flags and returns the action to run once
-	// they are parsed. Keeping registration apart from the work lets the
-	// dispatcher know --json before anything else can fail.
+	// they are parsed.
 	bind func(flags *flag.FlagSet) action
 	// needsPool is false for commands that must work without a database or Xcode.
 	needsPool bool
@@ -50,9 +46,10 @@ type action func(ctx context.Context, env *env, args []string) (any, error)
 // Run executes one CLI invocation and returns the process exit status.
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		printUsage(stdout)
+		err := errs.New(errs.CodeInvalidArgs, "missing command; run `simpool --help` for the list")
+		writeError(stdout, "", err)
 
-		return errs.ExitInvalidArgs
+		return errs.ExitCode(err)
 	}
 
 	name := args[0]
@@ -70,10 +67,10 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 
 	cmd, ok := commands()[name]
 	if !ok {
-		fmt.Fprintf(stderr, "simpool: unknown command %q\n\n", name)
-		printUsage(stderr)
+		err := errs.New(errs.CodeInvalidArgs, "unknown command %q; run `simpool --help` for the list", name)
+		writeError(stdout, name, err)
 
-		return errs.ExitInvalidArgs
+		return errs.ExitCode(err)
 	}
 
 	return runCommand(ctx, cmd, args[1:], stdout, stderr)
@@ -81,60 +78,52 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 
 func runCommand(ctx context.Context, cmd command, args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("simpool "+cmd.name, flag.ContinueOnError)
-	flags.SetOutput(stderr)
-
-	asJSON := flags.Bool("json", false, "emit a machine-readable JSON document")
 	act := cmd.bind(flags)
 
-	flags.Usage = func() {
-		fmt.Fprintf(stderr, "Usage: simpool %s\n\n%s\n\nOptions:\n", cmd.usage, cmd.summary)
-		flags.PrintDefaults()
-	}
+	// A bad option is reported in the JSON document alone, so the flag package
+	// must not print its own complaint and usage on the way out.
+	flags.SetOutput(io.Discard)
+	flags.Usage = func() {}
 
-	// Options are parsed before any setup, so a failure to load the config or
-	// open the database is still rendered in the format the caller asked for.
 	positional, err := parseFlags(flags, args)
 
-	environment := &env{
-		stdout: stdout,
-		stderr: stderr,
-		json:   *asJSON,
-	}
-
-	// `--help` is handled by the flag package, which already printed the usage.
 	if errors.Is(err, flag.ErrHelp) {
+		flags.SetOutput(stderr)
+		fmt.Fprintf(stderr, "Usage: simpool %s\n\n%s\n\nOptions:\n", cmd.usage, cmd.summary)
+		flags.PrintDefaults()
+
 		return errs.ExitOK
 	}
 
 	var result any
 	if err == nil {
-		result, err = execute(ctx, cmd.needsPool, act, environment, positional)
+		result, err = execute(ctx, cmd.needsPool, act, positional)
 	}
 
 	if err != nil {
-		writeError(stdout, stderr, cmd.name, err, environment.json)
+		writeError(stdout, cmd.name, err)
 
 		return errs.ExitCode(err)
 	}
 
-	if err := writeResult(stdout, cmd.name, result, environment.json); err != nil {
-		fmt.Fprintf(stderr, "simpool %s: %s\n", cmd.name, err)
+	if err := writeResult(stdout, cmd.name, result); err != nil {
+		writeError(stdout, cmd.name, err)
 
-		return errs.ExitInternal
+		return errs.ExitCode(err)
 	}
 
-	return exitStatusFor(result)
+	return errs.ExitOK
 }
 
 // execute loads the configuration, opens the pool when the command needs it,
 // and runs the action.
-func execute(ctx context.Context, needsPool bool, act action, environment *env, args []string) (any, error) {
+func execute(ctx context.Context, needsPool bool, act action, args []string) (any, error) {
 	cfg, err := config.Load()
 	if err != nil {
 		return nil, err
 	}
 
-	environment.cfg = cfg
+	environment := &env{cfg: cfg}
 
 	if !needsPool {
 		return act(ctx, environment, args)
@@ -155,16 +144,6 @@ func execute(ctx context.Context, needsPool bool, act action, environment *env, 
 // here without any other package learning about them.
 func newProvider(cfg config.Config) provider.Provider {
 	return ios.New(cfg.OpTimeout)
-}
-
-// exitStatusFor lets a successful command still report an unhealthy pool.
-func exitStatusFor(result any) int {
-	report, ok := result.(pool.DoctorReport)
-	if ok && !report.Healthy {
-		return errs.ExitInternal
-	}
-
-	return errs.ExitOK
 }
 
 func printUsage(out io.Writer) {
@@ -190,7 +169,8 @@ Commands:
 	}
 
 	fmt.Fprintf(out, `
-Every command accepts --json. Run `+"`simpool <command> --help`"+` for options.
+Every command prints one JSON document to stdout with "ok", "command" and
+either "data" or "error". Run `+"`simpool <command> --help`"+` for options.
 
 Environment:
   %-28s authoritative state directory (default: %s)

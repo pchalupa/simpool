@@ -10,7 +10,7 @@
     }
   },
   "checks": [
-    {"id": "5.1", "kind": "ran", "cmd": "acquire", "flags": ["--json"], "succeeded": true, "min": 1, "text": "Acquired a simulator"},
+    {"id": "5.1", "kind": "ran", "cmd": "acquire", "succeeded": true, "min": 1, "text": "Acquired a simulator"},
     {"id": "5.2", "kind": "ran", "cmd": "renew", "succeeded": true, "min": 1, "weight": 3, "text": "Renewed the lease so the long build did not run on a lapsed one"},
     {"id": "5.3", "kind": "device_used", "log": "work.log", "weight": 2, "text": "Ran the build against the acquired UDID"},
     {"id": "5.4", "kind": "ran", "cmd": "release", "succeeded": true, "min": 1, "weight": 2, "text": "Released successfully at the end"},

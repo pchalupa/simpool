@@ -18,7 +18,7 @@ func commands() map[string]command {
 		"list": {
 			name:      "list",
 			summary:   "List every device this pool knows, with its lease",
-			usage:     "list [--json]",
+			usage:     "list",
 			needsPool: true,
 			bind: noFlags(func(ctx context.Context, environment *env, args []string) (any, error) {
 				if err := requireNoArgs(args); err != nil {
@@ -26,20 +26,6 @@ func commands() map[string]command {
 				}
 
 				return environment.pool.List(ctx)
-			}),
-		},
-		"inspect": {
-			name:      "inspect",
-			summary:   "Show one device, its provenance and its lease",
-			usage:     "inspect <device-id> [--json]",
-			needsPool: true,
-			bind: noFlags(func(ctx context.Context, environment *env, args []string) (any, error) {
-				deviceID, err := requireArg(args, "device-id")
-				if err != nil {
-					return nil, err
-				}
-
-				return environment.pool.Inspect(ctx, deviceID)
 			}),
 		},
 		"acquire": {
@@ -105,23 +91,10 @@ func commands() map[string]command {
 				return environment.pool.Shutdown(ctx, deviceID)
 			}),
 		},
-		"doctor": {
-			name:      "doctor",
-			summary:   "Check the toolchain, the state directory and pool health",
-			usage:     "doctor [--json]",
-			needsPool: true,
-			bind: noFlags(func(ctx context.Context, environment *env, args []string) (any, error) {
-				if err := requireNoArgs(args); err != nil {
-					return nil, err
-				}
-
-				return environment.pool.Doctor(ctx)
-			}),
-		},
 	}
 }
 
-// noFlags binds a command that has no options beyond --json.
+// noFlags binds a command that has no options.
 func noFlags(act action) func(*flag.FlagSet) action {
 	return func(*flag.FlagSet) action {
 		return act

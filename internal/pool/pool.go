@@ -55,8 +55,7 @@ type DeviceView struct {
 	Lease  *store.Lease `json:"lease,omitempty"`
 }
 
-// ReconcileReport describes what reconciliation changed. It is surfaced in
-// `doctor` and in the JSON of commands that reconcile.
+// ReconcileReport describes what reconciliation changed.
 type ReconcileReport struct {
 	AdoptedDevices   []string `json:"adopted_devices"`
 	MissingDevices   []string `json:"missing_devices"`
@@ -247,40 +246,6 @@ func (p *Pool) List(ctx context.Context) ([]DeviceView, error) {
 	}
 
 	return views, nil
-}
-
-// Inspect returns one device with its live lease.
-func (p *Pool) Inspect(ctx context.Context, deviceID string) (DeviceView, error) {
-	if _, err := p.Reconcile(ctx); err != nil {
-		return DeviceView{}, err
-	}
-
-	var view DeviceView
-
-	err := p.store.Read(ctx, func(tx *store.Tx) error {
-		device, err := tx.GetDevice(ctx, deviceID)
-		if err != nil {
-			return err
-		}
-
-		view.Device = device
-
-		lease, ok, err := tx.LiveLeaseForDevice(ctx, deviceID)
-		if err != nil {
-			return err
-		}
-
-		if ok {
-			view.Lease = &lease
-		}
-
-		return nil
-	})
-	if err != nil {
-		return DeviceView{}, err
-	}
-
-	return view, nil
 }
 
 func knownDeviceIDs(ctx context.Context, tx *store.Tx) (map[string]bool, error) {

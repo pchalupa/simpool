@@ -119,6 +119,24 @@ func acquireWithCreate() pool.AcquireRequest {
 	}
 }
 
+// findDevice looks one device up in the reconciled pool listing.
+func findDevice(t *testing.T, instance *pool.Pool, deviceID string) (pool.DeviceView, bool) {
+	t.Helper()
+
+	views, err := instance.List(context.Background())
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+
+	for _, view := range views {
+		if view.Device.ID == deviceID {
+			return view, true
+		}
+	}
+
+	return pool.DeviceView{}, false
+}
+
 func requireCode(t *testing.T, err error, want errs.Code) {
 	t.Helper()
 
@@ -297,9 +315,9 @@ func TestExpiredLeaseIsReclaimedAndItsIDGoesInert(t *testing.T) {
 		t.Fatal("expected the stale lease to report itself already closed")
 	}
 
-	view, err := h.pool.Inspect(ctx, second.Device.ID)
-	if err != nil {
-		t.Fatalf("inspect: %v", err)
+	view, found := findDevice(t, h.pool, second.Device.ID)
+	if !found {
+		t.Fatalf("device %s is not in the pool", second.Device.ID)
 	}
 
 	if view.Lease == nil || view.Lease.ID != second.Lease.ID {
@@ -416,13 +434,13 @@ func TestLeaseMetadataIsVisibleEverywhere(t *testing.T) {
 		t.Fatalf("acquire response lost lease metadata: %+v", acquired.Lease)
 	}
 
-	view, err := h.pool.Inspect(ctx, acquired.Device.ID)
-	if err != nil {
-		t.Fatalf("inspect: %v", err)
+	view, found := findDevice(t, h.pool, acquired.Device.ID)
+	if !found {
+		t.Fatalf("device %s is not in the pool", acquired.Device.ID)
 	}
 
 	if view.Lease.Meta(store.MetaWorktree) != h.dir || view.Lease.Meta(store.MetaMetroPort) != "8091" {
-		t.Fatalf("inspect lost lease metadata: %+v", view.Lease)
+		t.Fatalf("lookup lost lease metadata: %+v", view.Lease)
 	}
 
 	views, err := h.pool.List(ctx)
@@ -490,9 +508,9 @@ func TestLeasesWithoutMetadataAreNormal(t *testing.T) {
 		t.Fatal("expected a second device")
 	}
 
-	view, err := h.pool.Inspect(ctx, first.Device.ID)
-	if err != nil {
-		t.Fatalf("inspect: %v", err)
+	view, found := findDevice(t, h.pool, first.Device.ID)
+	if !found {
+		t.Fatalf("device %s is not in the pool", first.Device.ID)
 	}
 
 	if len(view.Lease.Metadata) != 0 {
@@ -565,8 +583,8 @@ func TestDeleteProtectsExternalAndLeasedDevices(t *testing.T) {
 		t.Fatalf("forced delete: %v", err)
 	}
 
-	if _, err := h.pool.Inspect(ctx, acquired.Device.ID); errs.CodeOf(err) != errs.CodeDeviceNotFound {
-		t.Fatalf("expected the device to be gone, got %v", err)
+	if view, found := findDevice(t, h.pool, acquired.Device.ID); found {
+		t.Fatalf("expected the device to be gone, got %+v", view.Device)
 	}
 }
 
@@ -581,9 +599,9 @@ func TestDeviceRemovedOutsideSimpoolIsReportedNotHandedOut(t *testing.T) {
 
 	h.platform.Remove(acquired.Device.ID)
 
-	view, err := h.pool.Inspect(ctx, acquired.Device.ID)
-	if err != nil {
-		t.Fatalf("inspect: %v", err)
+	view, found := findDevice(t, h.pool, acquired.Device.ID)
+	if !found {
+		t.Fatalf("device %s is not in the pool", acquired.Device.ID)
 	}
 
 	if !view.Device.Missing() {
@@ -622,9 +640,9 @@ func TestInterruptedCreateIsAdoptedNotLeaked(t *testing.T) {
 		t.Fatalf("expected exactly one device on the platform, got %d", h.platform.Count())
 	}
 
-	view, err := h.pool.Inspect(ctx, acquired.Device.ID)
-	if err != nil {
-		t.Fatalf("inspect: %v", err)
+	view, found := findDevice(t, h.pool, acquired.Device.ID)
+	if !found {
+		t.Fatalf("device %s is not in the pool", acquired.Device.ID)
 	}
 
 	if !view.Device.Managed() {
@@ -678,24 +696,6 @@ func TestReclaimNeedsForceForALiveLease(t *testing.T) {
 	}
 }
 
-func TestDoctorReportsAnUnusablePool(t *testing.T) {
-	ctx := context.Background()
-	h := newHarness(t, 2)
-
-	report, err := h.pool.Doctor(ctx)
-	if err != nil {
-		t.Fatalf("doctor: %v", err)
-	}
-
-	if !report.Healthy {
-		t.Fatalf("expected a healthy pool, got %+v", report.Checks)
-	}
-
-	if report.SchemaVersion != store.SchemaVersion {
-		t.Fatalf("schema version %d, expected %d", report.SchemaVersion, store.SchemaVersion)
-	}
-}
-
 func TestStateSurvivesSeparateProcesses(t *testing.T) {
 	ctx := context.Background()
 	h := newHarness(t, 2)
@@ -712,9 +712,9 @@ func TestStateSurvivesSeparateProcesses(t *testing.T) {
 	// A second process sees the lease the first one took.
 	next := openPool(t, h.dir, h.platform, h.clock, 2)
 
-	view, err := next.Inspect(ctx, acquired.Device.ID)
-	if err != nil {
-		t.Fatalf("inspect from a second process: %v", err)
+	view, found := findDevice(t, next, acquired.Device.ID)
+	if !found {
+		t.Fatalf("device %s is not in the pool", acquired.Device.ID)
 	}
 
 	if view.Lease == nil || view.Lease.ID != acquired.Lease.ID || view.Lease.Meta(store.MetaMetroPort) != "8081" {

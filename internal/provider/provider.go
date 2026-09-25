@@ -66,9 +66,6 @@ type CreateRequest struct {
 type Provider interface {
 	// Platform returns the identifier devices of this provider carry.
 	Platform() string
-	// Preflight reports whether the platform toolchain is usable, with a
-	// human-readable description of what was found.
-	Preflight(ctx context.Context) (string, error)
 	ListDevices(ctx context.Context) ([]Device, error)
 	ListDeviceTypes(ctx context.Context) ([]DeviceType, error)
 	ListRuntimes(ctx context.Context) ([]Runtime, error)

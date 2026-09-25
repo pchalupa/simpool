@@ -36,21 +36,6 @@ func (p *Provider) Platform() string {
 	return provider.PlatformIOS
 }
 
-func (p *Provider) Preflight(ctx context.Context) (string, error) {
-	version, err := p.run(ctx, p.timeout, "xcrun", "xcodebuild", "-version")
-	if err != nil {
-		return "", errs.Wrap(err, errs.CodeProvider, "xcodebuild is not usable; install Xcode and run xcode-select --install")
-	}
-
-	summary := strings.Join(strings.Fields(strings.ReplaceAll(strings.TrimSpace(version), "\n", " ")), " ")
-
-	if _, err := p.simctl(ctx, p.timeout, "list", "-j", "runtimes"); err != nil {
-		return summary, err
-	}
-
-	return summary, nil
-}
-
 type deviceList struct {
 	Devices map[string][]struct {
 		UDID                 string `json:"udid"`

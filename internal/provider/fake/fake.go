@@ -99,10 +99,6 @@ func (p *Provider) Platform() string {
 	return provider.PlatformIOS
 }
 
-func (p *Provider) Preflight(context.Context) (string, error) {
-	return "fake provider", nil
-}
-
 func (p *Provider) ListDevices(context.Context) ([]provider.Device, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()

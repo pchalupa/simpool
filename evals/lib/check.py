@@ -48,10 +48,10 @@ def pool_state(run_dir, scenario):
         env["SIMPOOL_MAX_DEVICES"] = str(world["max_devices"])
 
     proc = subprocess.run(
-        [env["SIMPOOL_REAL_BIN"], "list", "--json"], capture_output=True, text=True, env=env
+        [env["SIMPOOL_REAL_BIN"], "list"], capture_output=True, text=True, env=env
     )
     try:
-        # `list --json` returns data as an array of {device, lease?} views; a
+        # `list` returns data as an array of {device, lease?} views; a
         # released or expired lease is simply absent.
         return json.loads(proc.stdout).get("data") or []
     except ValueError:
@@ -122,18 +122,6 @@ def check_before(spec, ctx):
     return first[0]["ts"] < then[-1]["ts"], "ordering of first %s and last %s" % (
         spec["first"], spec["then"],
     )
-
-
-@check("json_always")
-def check_json_always(spec, ctx):
-    """Every mutating call used --json, which is what the skill asks for."""
-    mutating = spec.get("cmds", ["acquire", "renew", "release"])
-    offenders = [
-        " ".join(e["argv"])
-        for e in ctx["log"]
-        if e["argv"] and e["argv"][0] in mutating and not has_flag(e, "--json")
-    ]
-    return not offenders, ("all --json" if not offenders else "missing --json: %s" % offenders)
 
 
 @check("no_blind_retry")

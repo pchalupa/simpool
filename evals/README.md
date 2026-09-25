@@ -91,7 +91,7 @@ task a user would actually give, and using the pool is the behaviour under test.
     "env": { "SIMPOOL_LEASE_TTL": "20s" },       // simpool's own configuration
     "seed": [                                    // what other agents already did
       { "as": "agent-b", "run": ["acquire", "--create-if-needed",
-                                 "--meta", "metro-port=8081", "--json"],
+                                 "--meta", "metro-port=8081"],
         "capture": "other" }
     ],
     "files": { "package.json": "..." }           // the project the agent finds
@@ -114,7 +114,6 @@ Deterministic, scored from the command log and the final pool state:
 | `ran` | the command was run, with given flags, successfully, within a count range |
 | `never_ran` | a command (or a flag on it) was never used |
 | `before` | one command preceded another |
-| `json_always` | every mutating call carried `--json` |
 | `no_blind_retry` | after a coded failure, the next command differed |
 | `no_direct_simctl` | the agent never drove a simulator around the pool |
 | `device_used` | the work ran against the UDID simpool handed out |

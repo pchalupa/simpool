@@ -54,9 +54,9 @@ func TestJSONErrorWhenConfigFailsToLoad(t *testing.T) {
 	t.Setenv(config.EnvMaxDevices, "nope")
 
 	for _, args := range [][]string{
-		{"acquire", "--json"},
-		{"inspect", "DEV-1", "--json"},
-		{"inspect", "--json", "DEV-1"},
+		{"acquire"},
+		{"renew", "lease-1"},
+		{"renew", "--ttl", "1h", "lease-1"},
 	} {
 		status, stdout, stderr := run(t, args...)
 
@@ -69,6 +69,10 @@ func TestJSONErrorWhenConfigFailsToLoad(t *testing.T) {
 		}
 
 		requireErrorEnvelope(t, stdout, args[0], errs.CodeInvalidArgs)
+
+		if !strings.Contains(stdout, config.EnvMaxDevices) {
+			t.Errorf("%v: error does not mention %s: %q", args, config.EnvMaxDevices, stdout)
+		}
 	}
 }
 
@@ -80,7 +84,7 @@ func TestJSONErrorWhenDatabaseFailsToOpen(t *testing.T) {
 
 	t.Setenv(config.EnvStateDir, filepath.Join(blocker, "state"))
 
-	status, stdout, stderr := run(t, "acquire", "--json")
+	status, stdout, stderr := run(t, "acquire")
 
 	if status != errs.ExitInternal {
 		t.Errorf("exit %d, expected %d", status, errs.ExitInternal)
@@ -93,22 +97,30 @@ func TestJSONErrorWhenDatabaseFailsToOpen(t *testing.T) {
 	requireErrorEnvelope(t, stdout, "acquire", errs.CodeState)
 }
 
-func TestHumanErrorWhenConfigFailsToLoad(t *testing.T) {
+func TestJSONErrorForBadInvocations(t *testing.T) {
 	t.Setenv(config.EnvStateDir, t.TempDir())
-	t.Setenv(config.EnvMaxDevices, "nope")
 
-	status, stdout, stderr := run(t, "acquire")
+	for _, testCase := range []struct {
+		args    []string
+		command string
+	}{
+		{args: nil, command: ""},
+		{args: []string{"frobnicate"}, command: "frobnicate"},
+		{args: []string{"acquire", "--no-such-flag"}, command: "acquire"},
+		{args: []string{"acquire", "--json"}, command: "acquire"},
+		{args: []string{"renew"}, command: "renew"},
+	} {
+		status, stdout, stderr := run(t, testCase.args...)
 
-	if status != errs.ExitInvalidArgs {
-		t.Errorf("exit %d, expected %d", status, errs.ExitInvalidArgs)
-	}
+		if status != errs.ExitInvalidArgs {
+			t.Errorf("%v: exit %d, expected %d", testCase.args, status, errs.ExitInvalidArgs)
+		}
 
-	if stdout != "" {
-		t.Errorf("unexpected stdout %q", stdout)
-	}
+		if stderr != "" {
+			t.Errorf("%v: unexpected stderr %q", testCase.args, stderr)
+		}
 
-	if !strings.Contains(stderr, config.EnvMaxDevices) {
-		t.Errorf("stderr does not mention %s: %q", config.EnvMaxDevices, stderr)
+		requireErrorEnvelope(t, stdout, testCase.command, errs.CodeInvalidArgs)
 	}
 }
 
