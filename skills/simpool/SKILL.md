@@ -42,7 +42,7 @@ ends. A simulator you picked yourself may already belong to another agent.
    `xcodebuild -destination "id=<device-id>"`. The device is already booted
    unless you passed `--no-boot`.
 4. **Renew** while the work continues: `simpool renew <lease-id>`. Leases
-   expire (two hours by default) and an expired lease is handed to the next
+   expire (15 minutes by default) and an expired lease is handed to the next
    agent, so renew before a long build or test run rather than after it. Renew
    also merges metadata, so you can record something you learned later:
    `simpool renew <lease-id> --meta metro-port=8081`.

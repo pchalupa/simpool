@@ -99,7 +99,7 @@ borrower, optional metadata, and an expiry.
 - Only one live lease can exist per device. The database enforces it, so two
   `acquire` commands racing each other can never win the same simulator. The
   loser gets `no_device_available`.
-- The default lease runs for two hours. Change it with `--ttl` or
+- The default lease runs for 15 minutes. Change it with `--ttl` or
   `SIMPOOL_LEASE_TTL`.
 - An expired lease is released the next time any command runs. Expiry never
   shuts a simulator down and never deletes it.
@@ -168,7 +168,7 @@ both.
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `SIMPOOL_STATE_DIR` | `~/Library/Application Support/simpool` | Where the database lives. Point it at a temp directory for tests. |
-| `SIMPOOL_LEASE_TTL` | `2h` | Default lease duration |
+| `SIMPOOL_LEASE_TTL` | `15m` | Default lease duration |
 | `SIMPOOL_BORROWER` | user@host/pid | Borrower recorded on leases |
 | `SIMPOOL_OP_TIMEOUT` | `5m` | Timeout for one simctl operation |
 | `SIMPOOL_BORROW_UNMANAGED` | off | Borrow simulators without importing them |

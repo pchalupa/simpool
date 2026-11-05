@@ -25,7 +25,7 @@ const (
 
 // Defaults applied when the corresponding environment variable is unset.
 const (
-	DefaultLeaseTTL  = 2 * time.Hour
+	DefaultLeaseTTL  = 15 * time.Minute
 	DefaultOpTimeout = 5 * time.Minute
 )
 
