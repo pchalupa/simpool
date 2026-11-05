@@ -1,6 +1,6 @@
 {
   "name": "@pchalupa/simpool",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Share a host's iOS simulators between several AI agents.",
   "repository": {
     "type": "git",
