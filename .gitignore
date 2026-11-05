@@ -6,3 +6,8 @@ bin/
 # evaluation artifacts
 evals/runs/
 __pycache__/
+
+# npm package build output
+npm/dist/
+npm/*.tgz
+npm/node_modules/

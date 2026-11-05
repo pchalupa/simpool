@@ -16,6 +16,24 @@ its own device and records who holds what.
 ## Install
 
 ```bash
+npx @pchalupa/simpool init
+```
+
+`init` copies the `simpool` binary to `~/.local/bin`, then hands over to the
+[skills CLI](https://github.com/vercel-labs/skills) to install the agent skill.
+Walk through its prompts to pick the agents and the scope. Options:
+
+| Option | What it does |
+| --- | --- |
+| `--dir <path>` | Put the binary elsewhere (or set `SIMPOOL_INSTALL_DIR`) |
+| `--skip-skill` | Install the binary only |
+
+If the install directory is not on `PATH`, `init` says so and prints the line to
+add to your shell profile.
+
+Or with Go:
+
+```bash
 go install github.com/pchalupa/simpool/cmd/simpool@latest
 ```
 
@@ -29,9 +47,6 @@ make install    # go install into $GOBIN
 You need macOS with Xcode and at least one simulator. `simpool` does not create
 simulators. Make them in Xcode or with `xcrun simctl create`, then add them to
 the pool with `simpool import`.
-
-Installing the agent skill does not install the binary. Both steps are separate,
-see [Agent skill](#agent-skill).
 
 ## Quick start
 
@@ -178,16 +193,16 @@ Each failure carries a stable `error.code` in JSON and a matching exit status:
 
 ## Agent skill
 
-The repository ships an agent skill in `skills/simpool/`. Install it with:
+The repository ships an agent skill in `skills/simpool/`. `npx @pchalupa/simpool
+init` installs it together with the binary. To install only the skill:
 
 ```bash
-npx skills add strv/simpool
+npx skills add pchalupa/simpool --skill simpool
 ```
 
-Verify the exact invocation against the published repository before you rely on
-it. The skill teaches an agent to acquire, renew and release, and to stop when
-the pool has nothing to lend. It does not install the binary, so install
-`simpool` separately and make sure it is on `PATH`.
+The skill teaches an agent to acquire, renew and release, and to stop when the
+pool has nothing to lend. It does not install the binary, so make sure `simpool`
+is on `PATH`.
 
 ## Layout
 
@@ -212,6 +227,24 @@ make test       # go test -race ./...
 make lint       # gofmt check and go vet
 make build
 ```
+
+Release with [release-it](https://github.com/release-it/release-it). Install it
+once with `cd npm && npm install`, log in with `npm login`, then on a clean
+`main`:
+
+```bash
+make release
+```
+
+It runs the lint and tests, asks for the new version, bumps
+`npm/package.json`, rebuilds both macOS binaries with that version, commits,
+tags `v<version>`, pushes and publishes to npm. The config lives in
+`npm/.release-it.json`. `make npm-pack` builds and packs a tarball without
+releasing, for trying `init` locally.
+
+The npm package bundles an arm64 and an x64 binary. `init` copies the one for
+the current machine; any other command run through the package is forwarded to
+it.
 
 Tests run against the in-memory provider, so they need no Xcode. They cover
 concurrent acquires from separate database handles, expiry and reclaim, lease
