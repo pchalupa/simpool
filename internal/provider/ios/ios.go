@@ -165,28 +165,6 @@ func (p *Provider) Inspect(ctx context.Context, id string) (provider.Device, err
 	return provider.Device{}, errs.New(errs.CodeDeviceNotFound, "simctl does not know device %q", id)
 }
 
-func (p *Provider) Create(ctx context.Context, req provider.CreateRequest) (provider.Device, error) {
-	out, err := p.simctl(ctx, p.timeout, "create", req.Name, req.DeviceType, req.Runtime)
-	if err != nil {
-		return provider.Device{}, err
-	}
-
-	udid := strings.TrimSpace(out)
-	if udid == "" {
-		return provider.Device{}, errs.New(errs.CodeProvider, "simctl create returned no device identifier")
-	}
-
-	return provider.Device{
-		ID:         udid,
-		Platform:   provider.PlatformIOS,
-		Name:       req.Name,
-		DeviceType: req.DeviceType,
-		Runtime:    req.Runtime,
-		State:      provider.StateShutdown,
-		Available:  true,
-	}, nil
-}
-
 func (p *Provider) Boot(ctx context.Context, id string) error {
 	_, err := p.simctl(ctx, p.timeout, "boot", id)
 	if err != nil && isStateNoop(err) {
@@ -207,12 +185,6 @@ func (p *Provider) Shutdown(ctx context.Context, id string) error {
 	if err != nil && isStateNoop(err) {
 		return nil
 	}
-
-	return err
-}
-
-func (p *Provider) Delete(ctx context.Context, id string) error {
-	_, err := p.simctl(ctx, p.timeout, "delete", id)
 
 	return err
 }

@@ -14,15 +14,11 @@ import sys
 
 # Everything a scenario is allowed to set, so the rest can be cleared.
 KNOBS = [
-    "SIMPOOL_MAX_DEVICES",
     "SIMPOOL_LEASE_TTL",
     "SIMPOOL_OP_TIMEOUT",
     "SIMPOOL_BORROW_UNMANAGED",
-    "SIMPOOL_DEFAULT_DEVICE_TYPE",
-    "SIMPOOL_DEFAULT_RUNTIME",
     "SIMCTL_FAKE_FAIL",
     "SIMCTL_FAKE_LATENCY_MS",
-    "SIMCTL_FAKE_VANISH_AFTER_CREATE",
 ]
 
 
@@ -31,8 +27,6 @@ def main(scenario_path):
     world = scenario.get("world", {})
 
     wanted = dict(world.get("env", {}))
-    if "max_devices" in world:
-        wanted["SIMPOOL_MAX_DEVICES"] = world["max_devices"]
 
     for knob in KNOBS:
         if knob in wanted:

@@ -43,9 +43,6 @@ def pool_state(run_dir, scenario):
     # every lease the scenario is about.
     env["PATH"] = os.path.join(run_dir, "bin") + os.pathsep + env["PATH"]
     env["SIMPOOL_INTERNAL"] = "1"
-    world = scenario.get("world", {})
-    if "max_devices" in world:
-        env["SIMPOOL_MAX_DEVICES"] = str(world["max_devices"])
 
     proc = subprocess.run(
         [env["SIMPOOL_REAL_BIN"], "list"], capture_output=True, text=True, env=env

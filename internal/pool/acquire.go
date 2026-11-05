@@ -10,29 +10,26 @@ import (
 )
 
 // AcquireRequest describes the device an agent wants to borrow. Metadata is
-// free-form and optional: a plain acquire records no worktree, no Metro port
-// and no keys at all.
+// free-form and optional.
 type AcquireRequest struct {
-	Platform       string
-	DeviceType     string
-	Runtime        string
-	Metadata       map[string]string
-	Borrower       string
-	TTL            time.Duration
-	CreateIfNeeded bool
-	Boot           bool
+	Platform   string
+	DeviceType string
+	Runtime    string
+	Metadata   map[string]string
+	Borrower   string
+	TTL        time.Duration
+	Boot       bool
 }
 
 // AcquireResult is what the borrower needs to start working.
 type AcquireResult struct {
-	Device  store.Device `json:"device"`
-	Lease   store.Lease  `json:"lease"`
-	Created bool         `json:"created"`
-	Booted  bool         `json:"booted"`
+	Device store.Device `json:"device"`
+	Lease  store.Lease  `json:"lease"`
+	Booted bool         `json:"booted"`
 }
 
-// Acquire atomically reserves one matching device, optionally creating it
-// within pool capacity, and boots it unless the caller opted out.
+// Acquire atomically reserves one matching device and boots it unless the
+// caller opted out.
 func (p *Pool) Acquire(ctx context.Context, request AcquireRequest) (AcquireResult, error) {
 	if _, err := p.Reconcile(ctx); err != nil {
 		return AcquireResult{}, err
@@ -49,14 +46,7 @@ func (p *Pool) Acquire(ctx context.Context, request AcquireRequest) (AcquireResu
 	}
 
 	if result == nil {
-		if !request.CreateIfNeeded {
-			return AcquireResult{}, p.noDeviceAvailable(ctx, request)
-		}
-
-		result, err = p.createAndReserve(ctx, request)
-		if err != nil {
-			return AcquireResult{}, err
-		}
+		return AcquireResult{}, p.noDeviceAvailable(ctx, request)
 	}
 
 	if !request.Boot {
@@ -113,10 +103,6 @@ func (p *Pool) reserveExisting(ctx context.Context, request AcquireRequest) (*Ac
 	now := p.now()
 
 	err := p.store.Write(ctx, func(tx *store.Tx) error {
-		if err := p.checkMetroPort(ctx, tx, request.Metadata[store.MetaMetroPort], ""); err != nil {
-			return err
-		}
-
 		device, found, err := tx.FindAvailableDevice(ctx, store.DeviceFilter{
 			Platform:   request.Platform,
 			DeviceType: request.DeviceType,
@@ -150,36 +136,6 @@ func (p *Pool) reserveExisting(ctx context.Context, request AcquireRequest) (*Ac
 	return result, nil
 }
 
-// createAndReserve creates a pool-owned device and leases it. The create is
-// reserved in the database first, so a killed process leaves a reconcilable
-// record instead of an orphan simulator.
-func (p *Pool) createAndReserve(ctx context.Context, request AcquireRequest) (*AcquireResult, error) {
-	created, operationID, err := p.createDevice(ctx, request.DeviceType, request.Runtime, request.Borrower)
-	if err != nil {
-		return nil, err
-	}
-
-	now := p.now()
-	lease := newLease(request, created.ID, now)
-
-	err = p.store.Write(ctx, func(tx *store.Tx) error {
-		if err := tx.FinishOperation(ctx, operationID, store.OperationDone, created.ID, "", now); err != nil {
-			return err
-		}
-
-		return tx.InsertLease(ctx, lease)
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return &AcquireResult{
-		Device:  created,
-		Lease:   lease,
-		Created: true,
-	}, nil
-}
-
 // bootLeased boots the leased device and waits for readiness. A boot failure
 // releases the lease rather than stranding the device on a dead borrower.
 func (p *Pool) bootLeased(ctx context.Context, result *AcquireResult) error {
@@ -209,11 +165,10 @@ func (p *Pool) bootLeased(ctx context.Context, result *AcquireResult) error {
 	})
 }
 
-// noDeviceAvailable explains why nothing could be leased, distinguishing an
-// exhausted pool from one that is merely busy.
+// noDeviceAvailable explains why nothing could be leased, distinguishing a pool
+// with no borrowable devices from one that is merely busy.
 func (p *Pool) noDeviceAvailable(ctx context.Context, request AcquireRequest) error {
 	var (
-		managed    int
 		total      int
 		borrowable int
 	)
@@ -231,10 +186,6 @@ func (p *Pool) noDeviceAvailable(ctx context.Context, request AcquireRequest) er
 
 			total++
 
-			if device.Managed() {
-				managed++
-			}
-
 			if device.Borrowable {
 				borrowable++
 			}
@@ -246,41 +197,15 @@ func (p *Pool) noDeviceAvailable(ctx context.Context, request AcquireRequest) er
 		return err
 	}
 
-	failure := errs.New(errs.CodeNoDeviceAvailable, "no borrowable %s device matches the request and --create-if-needed was not given", request.Platform).
-		WithDetail("pool_devices", managed).
+	failure := errs.New(errs.CodeNoDeviceAvailable, "no borrowable %s device matches the request", request.Platform).
 		WithDetail("known_devices", total).
-		WithDetail("borrowable_devices", borrowable).
-		WithDetail("max_devices", p.cfg.MaxDevices)
+		WithDetail("borrowable_devices", borrowable)
 
 	if borrowable == 0 && total > 0 {
-		failure.WithDetail("hint", "externally created simulators are not borrowable until `simpool import <device-id>`")
+		failure.WithDetail("hint", "simulators are not borrowable until `simpool import <device-id>`")
 	}
 
 	return failure
-}
-
-// checkMetroPort reports a port already recorded on another live lease, with
-// the conflicting lease identified so the caller can act on it. simpool does
-// not own or supervise the Metro process; it only refuses to hand out the same
-// port twice.
-func (p *Pool) checkMetroPort(ctx context.Context, tx *store.Tx, port string, allowLeaseID string) error {
-	if port == "" {
-		return nil
-	}
-
-	conflict, found, err := tx.LiveLeaseForMetroPort(ctx, port)
-	if err != nil {
-		return err
-	}
-
-	if !found || conflict.ID == allowLeaseID {
-		return nil
-	}
-
-	return errs.New(errs.CodeMetroPortConflict, "metro port %s is already recorded on live lease %s", port, conflict.ID).
-		WithDetail("metro_port", port).
-		WithDetail("conflicting_lease", conflict.ID).
-		WithDetail("conflicting_device", conflict.DeviceID)
 }
 
 func newLease(request AcquireRequest, deviceID string, now time.Time) store.Lease {

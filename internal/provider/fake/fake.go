@@ -21,13 +21,8 @@ type Provider struct {
 	runtimes []provider.Runtime
 	counter  int
 
-	// CreateErr, BootErr and DeleteErr make the next matching call fail.
-	CreateErr error
-	BootErr   error
-	DeleteErr error
-	// AfterCreate runs once the device exists on the platform but before the
-	// caller learns about it, which simulates a CLI process killed mid-create.
-	AfterCreate func(device provider.Device) error
+	// BootErr makes the next boot fail.
+	BootErr error
 }
 
 // New builds a provider with two runtimes and two device types installed.
@@ -131,30 +126,6 @@ func (p *Provider) Inspect(_ context.Context, id string) (provider.Device, error
 	return device, nil
 }
 
-func (p *Provider) Create(_ context.Context, request provider.CreateRequest) (provider.Device, error) {
-	p.mu.Lock()
-
-	if p.CreateErr != nil {
-		err := p.CreateErr
-		p.CreateErr = nil
-		p.mu.Unlock()
-
-		return provider.Device{}, err
-	}
-
-	device := p.insert(request.Name, request.DeviceType, request.Runtime)
-	hook := p.AfterCreate
-	p.mu.Unlock()
-
-	if hook != nil {
-		if err := hook(device); err != nil {
-			return provider.Device{}, err
-		}
-	}
-
-	return device, nil
-}
-
 func (p *Provider) Boot(_ context.Context, id string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -185,26 +156,6 @@ func (p *Provider) Shutdown(_ context.Context, id string) error {
 	defer p.mu.Unlock()
 
 	return p.setState(id, provider.StateShutdown)
-}
-
-func (p *Provider) Delete(_ context.Context, id string) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	if p.DeleteErr != nil {
-		err := p.DeleteErr
-		p.DeleteErr = nil
-
-		return err
-	}
-
-	if _, ok := p.devices[id]; !ok {
-		return errs.New(errs.CodeDeviceNotFound, "fake provider has no device %q", id)
-	}
-
-	delete(p.devices, id)
-
-	return nil
 }
 
 func (p *Provider) setState(id string, state provider.State) error {

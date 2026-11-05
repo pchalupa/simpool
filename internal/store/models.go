@@ -17,17 +17,6 @@ const (
 	ReleaseReasonExpired       = "expired"
 	ReleaseReasonReclaimed     = "reclaimed"
 	ReleaseReasonDeviceMissing = "device_missing"
-	ReleaseReasonDeviceDeleted = "device_deleted"
-)
-
-// Operation kinds and states used to reserve externally visible work before it
-// happens, so an interrupted CLI process can be reconciled later.
-const (
-	OperationCreate = "create"
-
-	OperationPending = "pending"
-	OperationDone    = "done"
-	OperationFailed  = "failed"
 )
 
 // Device is the persisted record of a simulator.
@@ -57,8 +46,8 @@ func (d Device) Missing() bool {
 }
 
 // Lease is a borrower's exclusive claim on a device. Everything the borrower
-// wants to remember about the device lives in Metadata, which is free-form: a
-// lease needs no worktree, no Metro port and no keys at all.
+// wants to remember about the device lives in Metadata, which is free-form and
+// stored as given; a lease needs no keys at all.
 type Lease struct {
 	ID            string            `json:"id"`
 	DeviceID      string            `json:"device_id"`
@@ -70,36 +59,7 @@ type Lease struct {
 	ReleaseReason string            `json:"release_reason,omitempty"`
 }
 
-// Well-known metadata keys. They are ordinary keys: simpool reads them where it
-// can act on them, and a lease that carries neither is perfectly normal.
-const (
-	// MetaWorktree is the canonical path of the checkout a lease belongs to.
-	MetaWorktree = "worktree"
-	// MetaMetroPort is the React Native Metro port the borrower will serve on.
-	// Two live leases may not record the same one.
-	MetaMetroPort = "metro_port"
-)
-
-// Meta returns one metadata value, or the empty string when it is not set.
-func (l Lease) Meta(key string) string {
-	return l.Metadata[key]
-}
-
 // Live reports whether the lease is still held at the given instant.
 func (l Lease) Live(now time.Time) bool {
 	return l.ReleasedAt == nil && l.ExpiresAt.After(now)
-}
-
-// Operation is a reservation for work that touches the platform.
-type Operation struct {
-	ID         string     `json:"id"`
-	Kind       string     `json:"kind"`
-	State      string     `json:"state"`
-	DeviceID   string     `json:"device_id,omitempty"`
-	DeviceName string     `json:"device_name,omitempty"`
-	Borrower   string     `json:"borrower,omitempty"`
-	StartedAt  time.Time  `json:"started_at"`
-	ExpiresAt  time.Time  `json:"expires_at"`
-	FinishedAt *time.Time `json:"finished_at,omitempty"`
-	Error      string     `json:"error,omitempty"`
 }

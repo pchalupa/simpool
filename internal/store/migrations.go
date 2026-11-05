@@ -36,31 +36,11 @@ var migrations = []string{
 		release_reason TEXT NOT NULL DEFAULT ''
 	);
 
-	-- One live lease per device, and one live lease per Metro port, enforced by
-	-- the database rather than by application-level checks, so concurrent
-	-- processes cannot both win.
+	-- One live lease per device, enforced by the database rather than by
+	-- application-level checks, so concurrent processes cannot both win.
 	CREATE UNIQUE INDEX idx_leases_live_device ON leases(device_id) WHERE released_at IS NULL;
 
-	CREATE UNIQUE INDEX idx_leases_live_metro
-		ON leases(json_extract(metadata, '$.metro_port'))
-		WHERE released_at IS NULL AND json_extract(metadata, '$.metro_port') IS NOT NULL;
-
-	CREATE INDEX idx_leases_device ON leases(device_id);
-
-	CREATE TABLE operations (
-		id          TEXT PRIMARY KEY,
-		kind        TEXT NOT NULL,
-		state       TEXT NOT NULL,
-		device_id   TEXT,
-		device_name TEXT,
-		borrower    TEXT NOT NULL DEFAULT '',
-		started_at  TEXT NOT NULL,
-		expires_at  TEXT NOT NULL,
-		finished_at TEXT,
-		error       TEXT NOT NULL DEFAULT ''
-	);
-
-	CREATE INDEX idx_operations_state ON operations(state);`,
+	CREATE INDEX idx_leases_device ON leases(device_id);`,
 }
 
 // SchemaVersion is the schema version this build expects.

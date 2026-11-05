@@ -1,5 +1,5 @@
 // Package config resolves simpool's host-local configuration: where the
-// authoritative state lives, lease defaults and pool capacity.
+// authoritative state lives and lease defaults.
 package config
 
 import (
@@ -17,46 +17,34 @@ import (
 // Environment variables recognised by simpool.
 const (
 	EnvStateDir        = "SIMPOOL_STATE_DIR"
-	EnvMaxDevices      = "SIMPOOL_MAX_DEVICES"
 	EnvLeaseTTL        = "SIMPOOL_LEASE_TTL"
 	EnvBorrower        = "SIMPOOL_BORROWER"
 	EnvOpTimeout       = "SIMPOOL_OP_TIMEOUT"
-	EnvDeviceType      = "SIMPOOL_DEFAULT_DEVICE_TYPE"
-	EnvRuntime         = "SIMPOOL_DEFAULT_RUNTIME"
 	EnvBorrowUnmanaged = "SIMPOOL_BORROW_UNMANAGED"
 )
 
 // Defaults applied when the corresponding environment variable is unset.
 const (
-	DefaultMaxDevices = 4
-	DefaultLeaseTTL   = 2 * time.Hour
-	DefaultOpTimeout  = 5 * time.Minute
+	DefaultLeaseTTL  = 2 * time.Hour
+	DefaultOpTimeout = 5 * time.Minute
 )
 
 // Config is the fully resolved configuration for a single CLI invocation.
 type Config struct {
-	StateDir          string
-	DatabasePath      string
-	MaxDevices        int
-	LeaseTTL          time.Duration
-	OpTimeout         time.Duration
-	Borrower          string
-	DefaultDeviceType string
-	DefaultRuntime    string
-	// BorrowUnmanaged makes externally created simulators borrowable without an
-	// explicit `simpool import`. Off by default so simpool never hands out a
-	// user's personal simulator.
+	StateDir     string
+	DatabasePath string
+	LeaseTTL     time.Duration
+	OpTimeout    time.Duration
+	Borrower     string
+	// BorrowUnmanaged makes simulators borrowable without an explicit
+	// `simpool import`. Off by default so simpool never hands out a user's
+	// personal simulator.
 	BorrowUnmanaged bool
 }
 
 // Load resolves configuration from the environment.
 func Load() (Config, error) {
 	stateDir, err := stateDir()
-	if err != nil {
-		return Config{}, err
-	}
-
-	maxDevices, err := intFromEnv(EnvMaxDevices, DefaultMaxDevices)
 	if err != nil {
 		return Config{}, err
 	}
@@ -72,15 +60,12 @@ func Load() (Config, error) {
 	}
 
 	return Config{
-		StateDir:          stateDir,
-		DatabasePath:      filepath.Join(stateDir, "pool.db"),
-		MaxDevices:        maxDevices,
-		LeaseTTL:          leaseTTL,
-		OpTimeout:         opTimeout,
-		Borrower:          defaultBorrower(),
-		DefaultDeviceType: os.Getenv(EnvDeviceType),
-		DefaultRuntime:    os.Getenv(EnvRuntime),
-		BorrowUnmanaged:   boolFromEnv(EnvBorrowUnmanaged),
+		StateDir:        stateDir,
+		DatabasePath:    filepath.Join(stateDir, "pool.db"),
+		LeaseTTL:        leaseTTL,
+		OpTimeout:       opTimeout,
+		Borrower:        defaultBorrower(),
+		BorrowUnmanaged: boolFromEnv(EnvBorrowUnmanaged),
 	}, nil
 }
 
@@ -130,20 +115,6 @@ func defaultBorrower() string {
 	}
 
 	return fmt.Sprintf("%s@%s/%d", name, host, os.Getpid())
-}
-
-func intFromEnv(key string, fallback int) (int, error) {
-	raw := os.Getenv(key)
-	if raw == "" {
-		return fallback, nil
-	}
-
-	value, err := strconv.Atoi(raw)
-	if err != nil || value < 0 {
-		return 0, errs.New(errs.CodeInvalidArgs, "%s must be a non-negative integer, got %q", key, raw)
-	}
-
-	return value, nil
 }
 
 func durationFromEnv(key string, fallback time.Duration) (time.Duration, error) {

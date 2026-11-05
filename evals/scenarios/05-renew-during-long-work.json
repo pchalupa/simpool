@@ -3,7 +3,7 @@
   "title": "Work outlasts a short lease",
   "prompt": "Run ./long-build.sh against an iOS simulator — it takes the UDID as its only argument and takes about half a minute. Tell me whether it succeeded. Leases on this host are short, and another agent will take the device the moment yours lapses, so make sure you still hold it when the build ends.",
   "world": {
-    "max_devices": 4,
+    "devices": 1,
     "env": { "SIMPOOL_LEASE_TTL": "20s" },
     "files": {
       "long-build.sh": "#!/usr/bin/env bash\nset -euo pipefail\nudid=\"${1:-}\"\n[ -n \"$udid\" ] || { echo 'usage: long-build.sh <udid>' >&2; exit 2; }\necho \"long-build.sh ran against $udid\" >>\"${WORK_LOG:-/dev/null}\"\nsleep 32\necho 'BUILD OK'\n"

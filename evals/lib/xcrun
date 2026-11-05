@@ -12,13 +12,10 @@ whole point of the concurrency suite -- see a consistent world.
 
 Fault injection, all via the environment:
 
-  SIMCTL_FAKE_FAIL=create:disk full,boot:device busy
+  SIMCTL_FAKE_FAIL=boot:device busy,shutdown:device busy
       Make the named subcommand fail with that message and a non-zero status.
   SIMCTL_FAKE_LATENCY_MS=250
       Sleep before answering, to widen races.
-  SIMCTL_FAKE_VANISH_AFTER_CREATE=1
-      Delete the device again the moment it is created, which is what a
-      simulator removed behind simpool's back looks like.
 """
 
 import fcntl
@@ -174,17 +171,16 @@ def cmd_create(state, args):
         die("Invalid runtime: %s" % runtime, 164)
 
     udid = state.mint_udid()
-    if os.environ.get("SIMCTL_FAKE_VANISH_AFTER_CREATE") != "1":
-        state.data["devices"].append(
-            {
-                "udid": udid,
-                "name": name,
-                "state": "Shutdown",
-                "isAvailable": True,
-                "deviceTypeIdentifier": device_type,
-                "runtime": runtime,
-            }
-        )
+    state.data["devices"].append(
+        {
+            "udid": udid,
+            "name": name,
+            "state": "Shutdown",
+            "isAvailable": True,
+            "deviceTypeIdentifier": device_type,
+            "runtime": runtime,
+        }
+    )
     sys.stdout.write(udid + "\n")
 
 

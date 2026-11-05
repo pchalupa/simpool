@@ -39,6 +39,16 @@ fresh() {
   SP="$SIMPOOL_REAL_BIN"
 }
 
+# seed_pool <n> — create n simulators the way a user would and import them, so
+# the pool has something to lend. simpool never creates devices itself.
+seed_pool() {
+  local index udid
+  for index in $(seq 1 "$1"); do
+    udid=$(xcrun simctl create "Pool iPhone $index" com.apple.CoreSimulator.SimDeviceType.iPhone-17 com.apple.CoreSimulator.SimRuntime.iOS-27-0)
+    "$SP" import "$udid" >/dev/null
+  done
+}
+
 # fan_out <n> <dir> <args...> — run n commands at once, one output file each.
 # Separate files matter: pretty-printed JSON appended concurrently to one file
 # interleaves into garbage, which would look like a simpool bug and is not one.
@@ -73,10 +83,10 @@ echo "simpool concurrency suite — $AGENTS parallel agents, ${SIMCTL_FAKE_LATEN
 echo
 
 if want "double-lease"; then
-  echo "── double-lease: $AGENTS agents race for a pool capped at 3 devices"
+  echo "── double-lease: $AGENTS agents race for a pool of 3 devices"
   fresh double-lease
-  export SIMPOOL_MAX_DEVICES=3
-  fan_out "$AGENTS" "$ROOT/double-lease/out" acquire --create-if-needed
+  seed_pool 3
+  fan_out "$AGENTS" "$ROOT/double-lease/out" acquire
   results "$ROOT/double-lease/out" >"$ROOT/double-lease/all.jsonl"
 
   granted=$(jq -s '[.[] | select(.ok)] | length' "$ROOT/double-lease/all.jsonl")
@@ -84,49 +94,24 @@ if want "double-lease"; then
   codes=$(jq -rs '[.[] | select(.ok | not) | .error.code] | unique | sort | join(",")' "$ROOT/double-lease/all.jsonl")
 
   assert_eq "$granted" "$devices" "every granted lease landed on a different device"
-  if (( granted >= 1 && granted <= 3 )); then
-    pass "grants stayed within the device cap ($granted of max 3)"
-  else
-    fail "grants stayed within the device cap" "granted $granted"
-  fi
+  assert_eq "3" "$granted" "every device in the pool was handed out once"
   # Every loser must come back as parseable JSON carrying a code the skill
   # teaches the agent to act on. Anything else leaves an agent with nothing to
   # branch on.
-  undocumented=$(jq -rs '[.[] | select(.ok | not) | .error.code | select(. != "no_capacity" and . != "no_device_available")] | unique | join(",")' "$ROOT/double-lease/all.jsonl")
+  undocumented=$(jq -rs '[.[] | select(.ok | not) | .error.code | select(. != "no_device_available")] | unique | join(",")' "$ROOT/double-lease/all.jsonl")
   if [[ -z "$undocumented" ]]; then
     pass "losers got a documented code (${codes:-none})"
   else
     fail "losers got a documented code" "also saw: $undocumented"
   fi
-  unset SIMPOOL_MAX_DEVICES
-  echo
-fi
-
-if want "metro-port"; then
-  echo "── metro-port: $AGENTS agents all ask for port 8081"
-  fresh metro-port
-  export SIMPOOL_MAX_DEVICES="$AGENTS"
-  fan_out "$AGENTS" "$ROOT/metro-port/out" acquire --create-if-needed --meta metro-port=8081
-  results "$ROOT/metro-port/out" >"$ROOT/metro-port/all.jsonl"
-
-  holders=$(jq -s '[.[] | select(.ok) | select(.data.lease.metadata.metro_port == "8081")] | length' "$ROOT/metro-port/all.jsonl")
-  conflicts=$(jq -s '[.[] | select(.ok | not) | select(.error.code == "metro_port_conflict")] | length' "$ROOT/metro-port/all.jsonl")
-
-  assert_eq "1" "$holders" "exactly one agent holds port 8081"
-  if (( conflicts >= 1 )); then
-    pass "the rest were told metro_port_conflict ($conflicts)"
-  else
-    fail "the rest were told metro_port_conflict" "none seen"
-  fi
-  unset SIMPOOL_MAX_DEVICES
   echo
 fi
 
 if want "expiry"; then
   echo "── expiry: a lapsed lease frees the device and the old ID goes inert"
   fresh expiry
-  export SIMPOOL_MAX_DEVICES=1
-  old=$(SIMPOOL_LEASE_TTL=1s SIMPOOL_BORROWER=agent-gone "$SP" acquire --create-if-needed | jq -r '.data.lease.id')
+  seed_pool 1
+  old=$(SIMPOOL_LEASE_TTL=1s SIMPOOL_BORROWER=agent-gone "$SP" acquire | jq -r '.data.lease.id')
   sleep 2
   second=$(SIMPOOL_BORROWER=agent-next "$SP" acquire)
   assert_eq "true" "$(echo "$second" | jq -r '.ok')" "the next agent got the device once the lease lapsed"
@@ -137,14 +122,14 @@ if want "expiry"; then
   released=$("$SP" release "$old")
   assert_eq "false" "$(echo "$released" | jq -r '.data.released')" "releasing with the lapsed ID does not touch the new borrower's lease"
   assert_eq "$(echo "$second" | jq -r '.data.lease.id')" "$("$SP" list | jq -r '.data[0].lease.id')" "the live lease still belongs to the new borrower"
-  unset SIMPOOL_MAX_DEVICES
   echo
 fi
 
 if want "double-release"; then
   echo "── double-release: two processes release the same lease at once"
   fresh double-release
-  lease=$("$SP" acquire --create-if-needed | jq -r '.data.lease.id')
+  seed_pool 1
+  lease=$("$SP" acquire | jq -r '.data.lease.id')
   ( "$SP" release "$lease" >"$ROOT/double-release/a.json" 2>&1 ) &
   ( "$SP" release "$lease" >"$ROOT/double-release/b.json" 2>&1 ) &
   wait
@@ -157,7 +142,8 @@ fi
 if want "vanished-device"; then
   echo "── vanished-device: a simulator deleted outside simpool is not handed out"
   fresh vanished-device
-  device=$("$SP" acquire --create-if-needed | jq -r '.data.device.id')
+  seed_pool 1
+  device=$("$SP" acquire | jq -r '.data.device.id')
   lease=$("$SP" list | jq -r '.data[0].lease.id')
   xcrun simctl delete "$device" >/dev/null 2>&1
 
@@ -169,15 +155,15 @@ if want "vanished-device"; then
 fi
 
 if want "external-device"; then
-  echo "── external-device: a simulator the user made is never handed out or deleted"
+  echo "── external-device: a simulator the user made is not handed out until imported"
   fresh external-device
-  export SIMPOOL_MAX_DEVICES=0
   personal=$(xcrun simctl create "Petr iPhone" com.apple.CoreSimulator.SimDeviceType.iPhone-17 com.apple.CoreSimulator.SimRuntime.iOS-27-0)
 
-  assert_eq "false" "$("$SP" acquire --create-if-needed | jq -r '.ok')" "acquire refuses to borrow it"
-  assert_eq "device_unmanaged" "$("$SP" delete "$personal" --force | jq -r '.error.code')" "delete --force still refuses to remove it"
+  assert_eq "no_device_available" "$("$SP" acquire | jq -r '.error.code')" "acquire refuses to borrow it"
   assert_eq "true" "$(xcrun simctl list -j devices | jq -r --arg d "$personal" '[.devices[][] | select(.udid == $d)] | length > 0')" "the user's simulator still exists"
-  unset SIMPOOL_MAX_DEVICES
+
+  "$SP" import "$personal" >/dev/null
+  assert_eq "$personal" "$("$SP" acquire | jq -r '.data.device.id')" "once imported, acquire hands it out"
   echo
 fi
 

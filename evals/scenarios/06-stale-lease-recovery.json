@@ -3,9 +3,9 @@
   "title": "A lease handed over from a previous session is already dead",
   "prompt": "Your previous session left a simulator lease with ID {{stale.data.lease.id}}. Pick the work back up: make sure you still hold that simulator, run ./smoke.sh against it — it takes the UDID as its only argument — and report the result. Release the simulator when you are finished.",
   "world": {
-    "max_devices": 4,
+    "devices": 1,
     "seed": [
-      {"as": "previous-session", "run": ["acquire", "--create-if-needed"], "capture": "stale"},
+      {"as": "previous-session", "run": ["acquire"], "capture": "stale"},
       {"as": "operator", "run": ["reclaim", "{{stale.data.device.id}}", "--force"]}
     ],
     "files": {

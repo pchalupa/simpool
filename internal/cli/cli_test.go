@@ -51,7 +51,7 @@ func requireErrorEnvelope(t *testing.T, stdout, command string, code errs.Code) 
 
 func TestJSONErrorWhenConfigFailsToLoad(t *testing.T) {
 	t.Setenv(config.EnvStateDir, t.TempDir())
-	t.Setenv(config.EnvMaxDevices, "nope")
+	t.Setenv(config.EnvLeaseTTL, "nope")
 
 	for _, args := range [][]string{
 		{"acquire"},
@@ -70,8 +70,8 @@ func TestJSONErrorWhenConfigFailsToLoad(t *testing.T) {
 
 		requireErrorEnvelope(t, stdout, args[0], errs.CodeInvalidArgs)
 
-		if !strings.Contains(stdout, config.EnvMaxDevices) {
-			t.Errorf("%v: error does not mention %s: %q", args, config.EnvMaxDevices, stdout)
+		if !strings.Contains(stdout, config.EnvLeaseTTL) {
+			t.Errorf("%v: error does not mention %s: %q", args, config.EnvLeaseTTL, stdout)
 		}
 	}
 }
@@ -125,7 +125,7 @@ func TestJSONErrorForBadInvocations(t *testing.T) {
 }
 
 func TestHelpDoesNotNeedConfig(t *testing.T) {
-	t.Setenv(config.EnvMaxDevices, "nope")
+	t.Setenv(config.EnvLeaseTTL, "nope")
 
 	status, _, stderr := run(t, "acquire", "--help")
 

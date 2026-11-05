@@ -2,7 +2,6 @@ package pool_test
 
 import (
 	"context"
-	"errors"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -47,21 +46,15 @@ type harness struct {
 	dir      string
 }
 
-func newHarness(t *testing.T, maxDevices int) *harness {
+func newHarness(t *testing.T) *harness {
 	t.Helper()
 
 	platform := fake.New()
 	testClock := newClock()
-
-	// t.TempDir lives behind a symlink on macOS; canonicalise it so worktree
-	// comparisons match what simpool records.
-	dir, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatalf("resolving temp dir: %v", err)
-	}
+	dir := t.TempDir()
 
 	return &harness{
-		pool:     openPool(t, dir, platform, testClock, maxDevices),
+		pool:     openPool(t, dir, platform, testClock),
 		platform: platform,
 		clock:    testClock,
 		dir:      dir,
@@ -70,13 +63,12 @@ func newHarness(t *testing.T, maxDevices int) *harness {
 
 // openPool builds an independent pool over the same database, standing in for a
 // separate simpool process.
-func openPool(t *testing.T, dir string, platform provider.Provider, testClock *clock, maxDevices int) *pool.Pool {
+func openPool(t *testing.T, dir string, platform provider.Provider, testClock *clock) *pool.Pool {
 	t.Helper()
 
 	cfg := config.Config{
 		StateDir:     dir,
 		DatabasePath: filepath.Join(dir, "pool.db"),
-		MaxDevices:   maxDevices,
 		LeaseTTL:     time.Hour,
 		OpTimeout:    time.Minute,
 		Borrower:     "test",
@@ -95,28 +87,24 @@ func openPool(t *testing.T, dir string, platform provider.Provider, testClock *c
 	return instance
 }
 
-// openStore opens the pool database directly, which tests use to plant the
-// records a crashed process would have left behind.
-func openStore(t *testing.T, dir string) *store.Store {
+// addDevices puts simulators on the fake host and imports them, which is how a
+// device becomes borrowable.
+func (h *harness) addDevices(t *testing.T, count int) []provider.Device {
 	t.Helper()
 
-	state, err := store.Open(context.Background(), filepath.Join(dir, "pool.db"))
-	if err != nil {
-		t.Fatalf("opening store: %v", err)
+	devices := make([]provider.Device, 0, count)
+
+	for range count {
+		device := h.platform.AddExisting("pool device")
+
+		if _, err := h.pool.Import(context.Background(), device.ID, false); err != nil {
+			t.Fatalf("importing device: %v", err)
+		}
+
+		devices = append(devices, device)
 	}
 
-	t.Cleanup(func() { state.Close() })
-
-	return state
-}
-
-// acquireWithCreate is the common "give me a device, make one if you must"
-// request.
-func acquireWithCreate() pool.AcquireRequest {
-	return pool.AcquireRequest{
-		CreateIfNeeded: true,
-		Boot:           true,
-	}
+	return devices
 }
 
 // findDevice looks one device up in the reconciled pool listing.
@@ -149,9 +137,9 @@ func requireCode(t *testing.T, err error, want errs.Code) {
 	}
 }
 
-func TestExternalDevicesNeedAnExplicitImport(t *testing.T) {
+func TestDevicesNeedAnExplicitImport(t *testing.T) {
 	ctx := context.Background()
-	h := newHarness(t, 2)
+	h := newHarness(t)
 	existing := h.platform.AddExisting("Someone's iPhone")
 
 	_, err := h.pool.Acquire(ctx, pool.AcquireRequest{Boot: true})
@@ -173,39 +161,28 @@ func TestExternalDevicesNeedAnExplicitImport(t *testing.T) {
 	if !result.Booted {
 		t.Fatal("expected the acquired device to be booted")
 	}
-
-	if result.Created {
-		t.Fatal("an imported device must not be reported as created")
-	}
 }
 
-func TestAcquireCreatesWithinCapacity(t *testing.T) {
+func TestReleasedDeviceIsHandedOutAgain(t *testing.T) {
 	ctx := context.Background()
-	h := newHarness(t, 1)
+	h := newHarness(t)
+	h.addDevices(t, 1)
 
-	first, err := h.pool.Acquire(ctx, pool.AcquireRequest{CreateIfNeeded: true, Boot: true})
+	first, err := h.pool.Acquire(ctx, pool.AcquireRequest{Boot: true})
 	if err != nil {
 		t.Fatalf("first acquire: %v", err)
 	}
 
-	if !first.Created {
-		t.Fatal("expected the first acquire to create a device")
-	}
-
-	_, err = h.pool.Acquire(ctx, pool.AcquireRequest{CreateIfNeeded: true, Boot: true})
-	requireCode(t, err, errs.CodeNoCapacity)
+	_, err = h.pool.Acquire(ctx, pool.AcquireRequest{Boot: true})
+	requireCode(t, err, errs.CodeNoDeviceAvailable)
 
 	if _, err := h.pool.Release(ctx, first.Lease.ID, false); err != nil {
 		t.Fatalf("release: %v", err)
 	}
 
-	second, err := h.pool.Acquire(ctx, pool.AcquireRequest{CreateIfNeeded: true, Boot: true})
+	second, err := h.pool.Acquire(ctx, pool.AcquireRequest{Boot: true})
 	if err != nil {
 		t.Fatalf("second acquire: %v", err)
-	}
-
-	if second.Created {
-		t.Fatal("expected the released device to be reused, not a new one")
 	}
 
 	if second.Device.ID != first.Device.ID {
@@ -215,15 +192,8 @@ func TestAcquireCreatesWithinCapacity(t *testing.T) {
 
 func TestConcurrentAcquiresNeverShareADevice(t *testing.T) {
 	ctx := context.Background()
-	h := newHarness(t, 2)
-
-	for range 2 {
-		device := h.platform.AddExisting("shared")
-
-		if _, err := h.pool.Import(ctx, device.ID, false); err != nil {
-			t.Fatalf("importing device: %v", err)
-		}
-	}
+	h := newHarness(t)
+	h.addDevices(t, 2)
 
 	const contenders = 8
 
@@ -242,7 +212,7 @@ func TestConcurrentAcquiresNeverShareADevice(t *testing.T) {
 
 			// Each contender opens its own database handle, as a separate
 			// simpool process would.
-			contender := openPool(t, h.dir, h.platform, h.clock, 2)
+			contender := openPool(t, h.dir, h.platform, h.clock)
 
 			result, err := contender.Acquire(ctx, pool.AcquireRequest{Boot: true})
 
@@ -280,12 +250,12 @@ func TestConcurrentAcquiresNeverShareADevice(t *testing.T) {
 
 func TestExpiredLeaseIsReclaimedAndItsIDGoesInert(t *testing.T) {
 	ctx := context.Background()
-	h := newHarness(t, 2)
+	h := newHarness(t)
+	h.addDevices(t, 1)
 
 	first, err := h.pool.Acquire(ctx, pool.AcquireRequest{
-		CreateIfNeeded: true,
-		TTL:            30 * time.Minute,
-		Boot:           true,
+		TTL:  30 * time.Minute,
+		Boot: true,
 	})
 	if err != nil {
 		t.Fatalf("acquire: %v", err)
@@ -327,9 +297,10 @@ func TestExpiredLeaseIsReclaimedAndItsIDGoesInert(t *testing.T) {
 
 func TestReleaseIsIdempotentAndUnknownLeaseIsDistinct(t *testing.T) {
 	ctx := context.Background()
-	h := newHarness(t, 2)
+	h := newHarness(t)
+	h.addDevices(t, 1)
 
-	acquired, err := h.pool.Acquire(ctx, pool.AcquireRequest{CreateIfNeeded: true, Boot: true})
+	acquired, err := h.pool.Acquire(ctx, pool.AcquireRequest{Boot: true})
 	if err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
@@ -362,9 +333,10 @@ func TestReleaseIsIdempotentAndUnknownLeaseIsDistinct(t *testing.T) {
 
 func TestReleaseCanShutDownTheDevice(t *testing.T) {
 	ctx := context.Background()
-	h := newHarness(t, 2)
+	h := newHarness(t)
+	h.addDevices(t, 1)
 
-	acquired, err := h.pool.Acquire(ctx, pool.AcquireRequest{CreateIfNeeded: true, Boot: true})
+	acquired, err := h.pool.Acquire(ctx, pool.AcquireRequest{Boot: true})
 	if err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
@@ -382,47 +354,16 @@ func TestReleaseCanShutDownTheDevice(t *testing.T) {
 	}
 }
 
-func TestMetroPortConflictIsRejected(t *testing.T) {
-	ctx := context.Background()
-	h := newHarness(t, 3)
-
-	if _, err := h.pool.Acquire(ctx, pool.AcquireRequest{
-		CreateIfNeeded: true,
-		Metadata: map[string]string{
-			store.MetaMetroPort: "8081",
-			store.MetaWorktree:  h.dir,
-		},
-		Boot: true,
-	}); err != nil {
-		t.Fatalf("first acquire: %v", err)
-	}
-
-	_, err := h.pool.Acquire(ctx, pool.AcquireRequest{
-		CreateIfNeeded: true,
-		Metadata:       map[string]string{store.MetaMetroPort: "8081"},
-		Boot:           true,
-	})
-	requireCode(t, err, errs.CodeMetroPortConflict)
-
-	if _, err := h.pool.Acquire(ctx, pool.AcquireRequest{
-		CreateIfNeeded: true,
-		Metadata:       map[string]string{store.MetaMetroPort: "8082"},
-		Boot:           true,
-	}); err != nil {
-		t.Fatalf("second acquire on a free port: %v", err)
-	}
-}
-
 func TestLeaseMetadataIsVisibleEverywhere(t *testing.T) {
 	ctx := context.Background()
-	h := newHarness(t, 2)
+	h := newHarness(t)
+	h.addDevices(t, 1)
 
 	acquired, err := h.pool.Acquire(ctx, pool.AcquireRequest{
-		CreateIfNeeded: true,
 		Metadata: map[string]string{
-			store.MetaWorktree:  h.dir,
-			store.MetaMetroPort: "8091",
-			"branch":            "feature/login",
+			"worktree": "/checkouts/app",
+			"port":     "8091",
+			"branch":   "feature/login",
 		},
 		Boot: true,
 	})
@@ -430,7 +371,7 @@ func TestLeaseMetadataIsVisibleEverywhere(t *testing.T) {
 		t.Fatalf("acquire: %v", err)
 	}
 
-	if acquired.Lease.Meta(store.MetaWorktree) != h.dir || acquired.Lease.Meta("branch") != "feature/login" {
+	if acquired.Lease.Metadata["worktree"] != "/checkouts/app" || acquired.Lease.Metadata["branch"] != "feature/login" {
 		t.Fatalf("acquire response lost lease metadata: %+v", acquired.Lease)
 	}
 
@@ -439,78 +380,89 @@ func TestLeaseMetadataIsVisibleEverywhere(t *testing.T) {
 		t.Fatalf("device %s is not in the pool", acquired.Device.ID)
 	}
 
-	if view.Lease.Meta(store.MetaWorktree) != h.dir || view.Lease.Meta(store.MetaMetroPort) != "8091" {
-		t.Fatalf("lookup lost lease metadata: %+v", view.Lease)
+	if view.Lease == nil || view.Lease.Metadata["port"] != "8091" {
+		t.Fatalf("list lost lease metadata: %+v", view.Lease)
 	}
 
-	views, err := h.pool.List(ctx)
-	if err != nil {
-		t.Fatalf("list: %v", err)
-	}
-
-	if len(views) != 1 || views[0].Lease == nil || views[0].Lease.Meta(store.MetaMetroPort) != "8091" {
-		t.Fatalf("list lost lease metadata: %+v", views)
-	}
-
-	// Renewing merges: the Metro port moves, the other keys stay put.
+	// Renewing merges: the updated key changes, the other keys stay put.
 	renewed, err := h.pool.Renew(ctx, pool.RenewRequest{
 		LeaseID:  acquired.Lease.ID,
-		Metadata: map[string]string{store.MetaMetroPort: "8092"},
+		Metadata: map[string]string{"port": "8092"},
 	})
 	if err != nil {
 		t.Fatalf("renew: %v", err)
 	}
 
-	if renewed.Lease.Meta(store.MetaMetroPort) != "8092" {
-		t.Fatalf("renew did not update the Metro port: %+v", renewed.Lease)
+	if renewed.Lease.Metadata["port"] != "8092" {
+		t.Fatalf("renew did not update the key: %+v", renewed.Lease)
 	}
 
-	if renewed.Lease.Meta("branch") != "feature/login" {
+	if renewed.Lease.Metadata["branch"] != "feature/login" {
 		t.Fatalf("renew dropped an unrelated metadata key: %+v", renewed.Lease)
 	}
 
 	// An empty value removes a key.
 	cleared, err := h.pool.Renew(ctx, pool.RenewRequest{
 		LeaseID:  acquired.Lease.ID,
-		Metadata: map[string]string{store.MetaMetroPort: ""},
+		Metadata: map[string]string{"port": ""},
 	})
 	if err != nil {
-		t.Fatalf("renew clearing the port: %v", err)
+		t.Fatalf("renew clearing the key: %v", err)
 	}
 
-	if _, present := cleared.Lease.Metadata[store.MetaMetroPort]; present {
-		t.Fatalf("expected the Metro port to be removed: %+v", cleared.Lease)
+	if _, present := cleared.Lease.Metadata["port"]; present {
+		t.Fatalf("expected the key to be removed: %+v", cleared.Lease)
+	}
+}
+
+// TestMetadataHasNoSpecialKeys checks that simpool stores every value as given
+// and never treats two leases with the same value as a conflict.
+func TestMetadataHasNoSpecialKeys(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	h.addDevices(t, 2)
+
+	metadata := map[string]string{
+		"worktree":   "relative/checkout",
+		"metro_port": "08081",
+	}
+
+	first, err := h.pool.Acquire(ctx, pool.AcquireRequest{Metadata: metadata, Boot: true})
+	if err != nil {
+		t.Fatalf("first acquire: %v", err)
+	}
+
+	second, err := h.pool.Acquire(ctx, pool.AcquireRequest{Metadata: metadata, Boot: true})
+	if err != nil {
+		t.Fatalf("second acquire with the same metadata: %v", err)
+	}
+
+	for _, lease := range []store.Lease{first.Lease, second.Lease} {
+		if lease.Metadata["worktree"] != "relative/checkout" || lease.Metadata["metro_port"] != "08081" {
+			t.Fatalf("metadata was rewritten: %+v", lease.Metadata)
+		}
 	}
 }
 
 // TestLeasesWithoutMetadataAreNormal covers the common case: a simulator
-// borrowed with no worktree, no Metro server and no keys at all.
+// borrowed with no metadata at all.
 func TestLeasesWithoutMetadataAreNormal(t *testing.T) {
 	ctx := context.Background()
-	h := newHarness(t, 2)
+	h := newHarness(t)
+	h.addDevices(t, 1)
 
-	first, err := h.pool.Acquire(ctx, acquireWithCreate())
+	acquired, err := h.pool.Acquire(ctx, pool.AcquireRequest{Boot: true})
 	if err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
 
-	if len(first.Lease.Metadata) != 0 {
-		t.Fatalf("expected an empty metadata bag, got %+v", first.Lease.Metadata)
+	if len(acquired.Lease.Metadata) != 0 {
+		t.Fatalf("expected an empty metadata bag, got %+v", acquired.Lease.Metadata)
 	}
 
-	// Two bare leases must not collide on an absent Metro port.
-	second, err := h.pool.Acquire(ctx, acquireWithCreate())
-	if err != nil {
-		t.Fatalf("second bare acquire: %v", err)
-	}
-
-	if second.Device.ID == first.Device.ID {
-		t.Fatal("expected a second device")
-	}
-
-	view, found := findDevice(t, h.pool, first.Device.ID)
+	view, found := findDevice(t, h.pool, acquired.Device.ID)
 	if !found {
-		t.Fatalf("device %s is not in the pool", first.Device.ID)
+		t.Fatalf("device %s is not in the pool", acquired.Device.ID)
 	}
 
 	if len(view.Lease.Metadata) != 0 {
@@ -520,79 +472,35 @@ func TestLeasesWithoutMetadataAreNormal(t *testing.T) {
 
 func TestMetadataIsValidated(t *testing.T) {
 	ctx := context.Background()
-	h := newHarness(t, 2)
+	h := newHarness(t)
+	h.addDevices(t, 1)
 
-	cases := map[string]map[string]string{
-		"bad port":  {store.MetaMetroPort: "not-a-port"},
-		"port zero": {store.MetaMetroPort: "0"},
-		"bad key":   {"not a key!": "value"},
-	}
+	_, err := h.pool.Acquire(ctx, pool.AcquireRequest{
+		Metadata: map[string]string{"not a key!": "value"},
+		Boot:     true,
+	})
+	requireCode(t, err, errs.CodeInvalidArgs)
 
-	for name, metadata := range cases {
-		t.Run(name, func(t *testing.T) {
-			_, err := h.pool.Acquire(ctx, pool.AcquireRequest{
-				CreateIfNeeded: true,
-				Metadata:       metadata,
-				Boot:           true,
-			})
-			requireCode(t, err, errs.CodeInvalidArgs)
-		})
-	}
-
-	// A dashed key is normalised to the underscored spelling simpool reads.
+	// A dashed key is normalised to the underscored spelling.
 	acquired, err := h.pool.Acquire(ctx, pool.AcquireRequest{
-		CreateIfNeeded: true,
-		Metadata:       map[string]string{"metro-port": "8081"},
-		Boot:           true,
+		Metadata: map[string]string{"my-key": "value"},
+		Boot:     true,
 	})
 	if err != nil {
 		t.Fatalf("acquire with a dashed key: %v", err)
 	}
 
-	if acquired.Lease.Meta(store.MetaMetroPort) != "8081" {
-		t.Fatalf("expected the key to normalise to %s: %+v", store.MetaMetroPort, acquired.Lease.Metadata)
-	}
-}
-
-func TestDeleteProtectsExternalAndLeasedDevices(t *testing.T) {
-	ctx := context.Background()
-	h := newHarness(t, 2)
-
-	acquired, err := h.pool.Acquire(ctx, pool.AcquireRequest{CreateIfNeeded: true, Boot: true})
-	if err != nil {
-		t.Fatalf("acquire: %v", err)
-	}
-
-	external := h.platform.AddExisting("personal iPhone")
-
-	if _, err := h.pool.Import(ctx, external.ID, false); err != nil {
-		t.Fatalf("import: %v", err)
-	}
-
-	_, err = h.pool.Delete(ctx, external.ID, false)
-	requireCode(t, err, errs.CodeDeviceUnmanaged)
-
-	// Even --force must not delete a device simpool did not create.
-	_, err = h.pool.Delete(ctx, external.ID, true)
-	requireCode(t, err, errs.CodeDeviceUnmanaged)
-
-	_, err = h.pool.Delete(ctx, acquired.Device.ID, false)
-	requireCode(t, err, errs.CodeDeviceLeased)
-
-	if _, err := h.pool.Delete(ctx, acquired.Device.ID, true); err != nil {
-		t.Fatalf("forced delete: %v", err)
-	}
-
-	if view, found := findDevice(t, h.pool, acquired.Device.ID); found {
-		t.Fatalf("expected the device to be gone, got %+v", view.Device)
+	if acquired.Lease.Metadata["my_key"] != "value" {
+		t.Fatalf("expected the key to normalise to my_key: %+v", acquired.Lease.Metadata)
 	}
 }
 
 func TestDeviceRemovedOutsideSimpoolIsReportedNotHandedOut(t *testing.T) {
 	ctx := context.Background()
-	h := newHarness(t, 2)
+	h := newHarness(t)
+	h.addDevices(t, 1)
 
-	acquired, err := h.pool.Acquire(ctx, pool.AcquireRequest{CreateIfNeeded: true, Boot: true})
+	acquired, err := h.pool.Acquire(ctx, pool.AcquireRequest{Boot: true})
 	if err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
@@ -619,62 +527,33 @@ func TestDeviceRemovedOutsideSimpoolIsReportedNotHandedOut(t *testing.T) {
 	requireCode(t, err, errs.CodeLeaseNotLive)
 }
 
-func TestInterruptedCreateIsAdoptedNotLeaked(t *testing.T) {
-	ctx := context.Background()
-	h := newHarness(t, 2)
-
-	// The platform makes the device, then the call fails: the classic killed
-	// process. The device must end up owned by the pool, not orphaned.
-	h.platform.AfterCreate = func(provider.Device) error {
-		h.platform.AfterCreate = nil
-
-		return errors.New("simulated interruption")
-	}
-
-	acquired, err := h.pool.Acquire(ctx, pool.AcquireRequest{CreateIfNeeded: true, Boot: true})
-	if err != nil {
-		t.Fatalf("acquire after an interrupted create: %v", err)
-	}
-
-	if h.platform.Count() != 1 {
-		t.Fatalf("expected exactly one device on the platform, got %d", h.platform.Count())
-	}
-
-	view, found := findDevice(t, h.pool, acquired.Device.ID)
-	if !found {
-		t.Fatalf("device %s is not in the pool", acquired.Device.ID)
-	}
-
-	if !view.Device.Managed() {
-		t.Fatal("an adopted device must be owned by the pool")
-	}
-}
-
 func TestBootFailureDoesNotStrandTheDevice(t *testing.T) {
 	ctx := context.Background()
-	h := newHarness(t, 2)
+	h := newHarness(t)
+	device := h.addDevices(t, 1)[0]
 
 	h.platform.BootErr = errs.New(errs.CodeProvider, "boot refused")
 
-	_, err := h.pool.Acquire(ctx, pool.AcquireRequest{CreateIfNeeded: true, Boot: true})
+	_, err := h.pool.Acquire(ctx, pool.AcquireRequest{Boot: true})
 	requireCode(t, err, errs.CodeProvider)
 
-	// The device exists and is free again, so the next acquire reuses it.
+	// The device is free again, so the next acquire gets it.
 	next, err := h.pool.Acquire(ctx, pool.AcquireRequest{Boot: true})
 	if err != nil {
 		t.Fatalf("acquire after a failed boot: %v", err)
 	}
 
-	if next.Created {
-		t.Fatal("expected the device from the failed boot to be reused")
+	if next.Device.ID != device.ID {
+		t.Fatalf("expected device %s from the failed boot, got %s", device.ID, next.Device.ID)
 	}
 }
 
 func TestReclaimNeedsForceForALiveLease(t *testing.T) {
 	ctx := context.Background()
-	h := newHarness(t, 2)
+	h := newHarness(t)
+	h.addDevices(t, 1)
 
-	acquired, err := h.pool.Acquire(ctx, pool.AcquireRequest{CreateIfNeeded: true, Boot: true})
+	acquired, err := h.pool.Acquire(ctx, pool.AcquireRequest{Boot: true})
 	if err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
@@ -698,26 +577,26 @@ func TestReclaimNeedsForceForALiveLease(t *testing.T) {
 
 func TestStateSurvivesSeparateProcesses(t *testing.T) {
 	ctx := context.Background()
-	h := newHarness(t, 2)
+	h := newHarness(t)
+	h.addDevices(t, 1)
 
 	acquired, err := h.pool.Acquire(ctx, pool.AcquireRequest{
-		CreateIfNeeded: true,
-		Metadata:       map[string]string{store.MetaMetroPort: "8081"},
-		Boot:           true,
+		Metadata: map[string]string{"task": "login-flow"},
+		Boot:     true,
 	})
 	if err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
 
 	// A second process sees the lease the first one took.
-	next := openPool(t, h.dir, h.platform, h.clock, 2)
+	next := openPool(t, h.dir, h.platform, h.clock)
 
 	view, found := findDevice(t, next, acquired.Device.ID)
 	if !found {
 		t.Fatalf("device %s is not in the pool", acquired.Device.ID)
 	}
 
-	if view.Lease == nil || view.Lease.ID != acquired.Lease.ID || view.Lease.Meta(store.MetaMetroPort) != "8081" {
+	if view.Lease == nil || view.Lease.ID != acquired.Lease.ID || view.Lease.Metadata["task"] != "login-flow" {
 		t.Fatalf("second process lost the lease: %+v", view.Lease)
 	}
 

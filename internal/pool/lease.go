@@ -9,9 +9,9 @@ import (
 	"github.com/pchalupa/simpool/internal/store"
 )
 
-// RenewRequest extends a lease and may update its metadata, for instance when
-// Metro is started after the device was acquired. Metadata is merged into what
-// the lease already carries; a key given with an empty value is removed.
+// RenewRequest extends a lease and may update its metadata. Metadata is merged
+// into what the lease already carries; a key given with an empty value is
+// removed.
 type RenewRequest struct {
 	LeaseID  string
 	TTL      time.Duration
@@ -61,13 +61,7 @@ func (p *Pool) Renew(ctx context.Context, request RenewRequest) (RenewResult, er
 		}
 
 		if len(update) > 0 {
-			merged := mergeMetadata(lease.Metadata, update)
-
-			if err := p.checkMetroPort(ctx, tx, merged[store.MetaMetroPort], lease.ID); err != nil {
-				return err
-			}
-
-			if err := tx.SetLeaseMetadata(ctx, lease.ID, merged); err != nil {
+			if err := tx.SetLeaseMetadata(ctx, lease.ID, mergeMetadata(lease.Metadata, update)); err != nil {
 				return err
 			}
 		}

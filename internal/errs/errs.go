@@ -17,10 +17,7 @@ const (
 	CodeLeaseNotFound     Code = "lease_not_found"
 	CodeLeaseNotLive      Code = "lease_not_live"
 	CodeDeviceLeased      Code = "device_leased"
-	CodeDeviceUnmanaged   Code = "device_unmanaged"
 	CodeDeviceMissing     Code = "device_missing"
-	CodeMetroPortConflict Code = "metro_port_conflict"
-	CodeNoCapacity        Code = "no_capacity"
 	CodeNoDeviceAvailable Code = "no_device_available"
 	CodeProvider          Code = "provider_error"
 	CodeTimeout           Code = "timeout"
@@ -36,7 +33,7 @@ const (
 	ExitInvalidArgs = 2
 	ExitNotFound    = 3
 	ExitConflict    = 4
-	ExitCapacity    = 5
+	ExitUnavailable = 5
 	ExitProvider    = 6
 	ExitTimeout     = 7
 )
@@ -121,10 +118,10 @@ func ExitCode(err error) int {
 		return ExitInvalidArgs
 	case CodeDeviceNotFound, CodeLeaseNotFound:
 		return ExitNotFound
-	case CodeLeaseNotLive, CodeDeviceLeased, CodeDeviceUnmanaged, CodeDeviceMissing, CodeMetroPortConflict:
+	case CodeLeaseNotLive, CodeDeviceLeased, CodeDeviceMissing:
 		return ExitConflict
-	case CodeNoCapacity, CodeNoDeviceAvailable:
-		return ExitCapacity
+	case CodeNoDeviceAvailable:
+		return ExitUnavailable
 	case CodeProvider:
 		return ExitProvider
 	case CodeTimeout:

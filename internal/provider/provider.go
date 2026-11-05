@@ -40,26 +40,18 @@ type Device struct {
 	Available bool `json:"available"`
 }
 
-// DeviceType is a creatable hardware profile (e.g. an iPhone model).
+// DeviceType is a hardware profile (e.g. an iPhone model).
 type DeviceType struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 }
 
-// Runtime is an installed OS version a device can be created against.
+// Runtime is an installed OS version a device runs.
 type Runtime struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
 	Version   string `json:"version"`
 	Available bool   `json:"available"`
-}
-
-// CreateRequest describes a device to create. Name is chosen by simpool and
-// encodes the reserving operation so an interrupted create can be reconciled.
-type CreateRequest struct {
-	Name       string
-	DeviceType string
-	Runtime    string
 }
 
 // Provider is the set of operations simpool needs from a platform toolchain.
@@ -72,10 +64,8 @@ type Provider interface {
 	// Inspect returns a single device, or an error with code
 	// errs.CodeDeviceNotFound when the platform no longer knows it.
 	Inspect(ctx context.Context, id string) (Device, error)
-	Create(ctx context.Context, req CreateRequest) (Device, error)
 	Boot(ctx context.Context, id string) error
 	// WaitReady blocks until the device finished booting or timeout elapses.
 	WaitReady(ctx context.Context, id string, timeout time.Duration) error
 	Shutdown(ctx context.Context, id string) error
-	Delete(ctx context.Context, id string) error
 }

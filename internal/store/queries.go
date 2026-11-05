@@ -17,9 +17,6 @@ const deviceColumns = `id, platform, name, device_type, runtime, state, provenan
 const leaseColumns = `id, device_id, borrower, metadata,
 	acquired_at, expires_at, released_at, release_reason`
 
-// metroPortPath is the JSON path the live-lease uniqueness index is built on.
-const metroPortPath = `json_extract(metadata, '$.metro_port')`
-
 // Observation is what the provider currently reports about a device.
 type Observation struct {
 	ID         string
@@ -203,20 +200,6 @@ func (t *Tx) FindAvailableDevice(ctx context.Context, filter DeviceFilter) (Devi
 	return device, true, nil
 }
 
-// CountDevices counts non-missing devices with the given provenance, which is
-// what pool capacity is measured against.
-func (t *Tx) CountDevices(ctx context.Context, platform, provenance string) (int, error) {
-	const query = `SELECT COUNT(*) FROM devices
-		WHERE platform = ? AND provenance = ? AND missing_at IS NULL`
-
-	var count int
-	if err := t.conn.QueryRowContext(ctx, query, platform, provenance).Scan(&count); err != nil {
-		return 0, errs.Wrap(err, errs.CodeState, "counting devices")
-	}
-
-	return count, nil
-}
-
 // SetBorrowable marks whether the pool may hand a device out.
 func (t *Tx) SetBorrowable(ctx context.Context, id string, borrowable bool, now time.Time) error {
 	const statement = `UPDATE devices SET borrowable = ?, updated_at = ? WHERE id = ?`
@@ -239,17 +222,8 @@ func (t *Tx) SetDeviceState(ctx context.Context, id, state string, now time.Time
 	return nil
 }
 
-// DeleteDevice removes a device and, by cascade, its lease history.
-func (t *Tx) DeleteDevice(ctx context.Context, id string) error {
-	if _, err := t.conn.ExecContext(ctx, `DELETE FROM devices WHERE id = ?`, id); err != nil {
-		return errs.Wrap(err, errs.CodeState, "deleting device %q", id)
-	}
-
-	return nil
-}
-
 // InsertLease records a new live lease. A unique-index violation means another
-// process won the same device or Metro port first.
+// process won the same device first.
 func (t *Tx) InsertLease(ctx context.Context, lease Lease) error {
 	const statement = `INSERT INTO leases (
 		id, device_id, borrower, metadata, acquired_at, expires_at, released_at, release_reason
@@ -274,23 +248,11 @@ func (t *Tx) InsertLease(ctx context.Context, lease Lease) error {
 		return nil
 	}
 
-	return leaseWriteError(err, lease.DeviceID, lease.Meta(MetaMetroPort))
-}
-
-// leaseWriteError maps a unique-index violation onto the code that explains
-// which claim was already taken.
-func leaseWriteError(err error, deviceID, metroPort string) error {
-	message := err.Error()
-
-	switch {
-	case strings.Contains(message, "leases.device_id"):
-		return errs.New(errs.CodeDeviceLeased, "device %s is already leased", deviceID)
-	case strings.Contains(message, "idx_leases_live_metro"), strings.Contains(message, "leases.metadata"):
-		return errs.New(errs.CodeMetroPortConflict, "metro port %s is already recorded on a live lease", metroPort).
-			WithDetail("metro_port", metroPort)
-	default:
-		return errs.Wrap(err, errs.CodeState, "recording lease for device %s", deviceID)
+	if strings.Contains(err.Error(), "leases.device_id") {
+		return errs.New(errs.CodeDeviceLeased, "device %s is already leased", lease.DeviceID)
 	}
+
+	return errs.Wrap(err, errs.CodeState, "recording lease for device %s", lease.DeviceID)
 }
 
 // GetLease returns one lease, or a lease_not_found error.
@@ -310,23 +272,6 @@ func (t *Tx) LiveLeaseForDevice(ctx context.Context, deviceID string) (Lease, bo
 	const query = `SELECT ` + leaseColumns + ` FROM leases WHERE device_id = ? AND released_at IS NULL`
 
 	lease, err := scanLease(t.conn.QueryRowContext(ctx, query, deviceID))
-	if errors.Is(err, sql.ErrNoRows) {
-		return Lease{}, false, nil
-	}
-
-	if err != nil {
-		return Lease{}, false, err
-	}
-
-	return lease, true, nil
-}
-
-// LiveLeaseForMetroPort returns the unreleased lease recording a Metro port.
-func (t *Tx) LiveLeaseForMetroPort(ctx context.Context, port string) (Lease, bool, error) {
-	const query = `SELECT ` + leaseColumns + ` FROM leases
-		WHERE ` + metroPortPath + ` = ? AND released_at IS NULL`
-
-	lease, err := scanLease(t.conn.QueryRowContext(ctx, query, port))
 	if errors.Is(err, sql.ErrNoRows) {
 		return Lease{}, false, nil
 	}
@@ -470,114 +415,10 @@ func (t *Tx) SetLeaseMetadata(ctx context.Context, id string, metadata map[strin
 	}
 
 	if _, err := t.conn.ExecContext(ctx, statement, encoded, id); err != nil {
-		return leaseWriteError(err, id, metadata[MetaMetroPort])
+		return errs.Wrap(err, errs.CodeState, "updating metadata on lease %q", id)
 	}
 
 	return nil
-}
-
-// InsertOperation reserves externally visible work before it is performed.
-func (t *Tx) InsertOperation(ctx context.Context, operation Operation) error {
-	const statement = `INSERT INTO operations (
-		id, kind, state, device_id, device_name, borrower, started_at, expires_at, finished_at, error
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, '')`
-
-	_, err := t.conn.ExecContext(
-		ctx,
-		statement,
-		operation.ID,
-		operation.Kind,
-		operation.State,
-		nullableString(operation.DeviceID),
-		nullableString(operation.DeviceName),
-		operation.Borrower,
-		formatTime(operation.StartedAt),
-		formatTime(operation.ExpiresAt),
-	)
-	if err != nil {
-		return errs.Wrap(err, errs.CodeState, "recording %s operation", operation.Kind)
-	}
-
-	return nil
-}
-
-// FinishOperation records the outcome of a reserved operation.
-func (t *Tx) FinishOperation(ctx context.Context, id, state, deviceID, failure string, now time.Time) error {
-	const statement = `UPDATE operations
-		SET state = ?, device_id = COALESCE(?, device_id), finished_at = ?, error = ?
-		WHERE id = ?`
-
-	_, err := t.conn.ExecContext(ctx, statement, state, nullableString(deviceID), formatTime(now), failure, id)
-	if err != nil {
-		return errs.Wrap(err, errs.CodeState, "finishing operation %q", id)
-	}
-
-	return nil
-}
-
-// PendingOperations returns reservations that are still open.
-func (t *Tx) PendingOperations(ctx context.Context) ([]Operation, error) {
-	const query = `SELECT id, kind, state, device_id, device_name, borrower,
-		started_at, expires_at, finished_at, error
-		FROM operations WHERE state = ? ORDER BY started_at`
-
-	rows, err := t.conn.QueryContext(ctx, query, OperationPending)
-	if err != nil {
-		return nil, errs.Wrap(err, errs.CodeState, "listing operations")
-	}
-	defer rows.Close()
-
-	operations := []Operation{}
-
-	for rows.Next() {
-		var (
-			operation  Operation
-			deviceID   sql.NullString
-			deviceName sql.NullString
-			startedAt  string
-			expiresAt  string
-			finishedAt sql.NullString
-		)
-
-		err := rows.Scan(
-			&operation.ID,
-			&operation.Kind,
-			&operation.State,
-			&deviceID,
-			&deviceName,
-			&operation.Borrower,
-			&startedAt,
-			&expiresAt,
-			&finishedAt,
-			&operation.Error,
-		)
-		if err != nil {
-			return nil, errs.Wrap(err, errs.CodeState, "scanning operation")
-		}
-
-		operation.DeviceID = deviceID.String
-		operation.DeviceName = deviceName.String
-
-		if operation.StartedAt, err = parseTime(startedAt); err != nil {
-			return nil, err
-		}
-
-		if operation.ExpiresAt, err = parseTime(expiresAt); err != nil {
-			return nil, err
-		}
-
-		if operation.FinishedAt, err = nullableTime(finishedAt); err != nil {
-			return nil, err
-		}
-
-		operations = append(operations, operation)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, errs.Wrap(err, errs.CodeState, "listing operations")
-	}
-
-	return operations, nil
 }
 
 // scanner covers both *sql.Row and *sql.Rows.
@@ -676,16 +517,8 @@ func scanLease(source scanner) (Lease, error) {
 	return lease, nil
 }
 
-func nullableString(value string) any {
-	if value == "" {
-		return nil
-	}
-
-	return value
-}
-
 // encodeMetadata stores the bag as a JSON object. An empty bag is stored as
-// `{}` rather than NULL, so the Metro-port index sees a consistent shape.
+// `{}` rather than NULL, so every row has the same shape.
 func encodeMetadata(metadata map[string]string) (string, error) {
 	if len(metadata) == 0 {
 		return "{}", nil

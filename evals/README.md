@@ -37,28 +37,26 @@ instructions no scenario wrote. Logs, state and the fake host are copied back to
 `evals/runs/<timestamp>/` when the run ends.
 
 The fake host takes fault injection through the environment:
-`SIMCTL_FAKE_FAIL=create:disk full`, `SIMCTL_FAKE_LATENCY_MS=250`,
-`SIMCTL_FAKE_VANISH_AFTER_CREATE=1`.
+`SIMCTL_FAKE_FAIL=boot:device busy`, `SIMCTL_FAKE_LATENCY_MS=250`.
 
 ## Concurrency suite
 
 ```bash
 ./evals/race.sh                 # every case
-./evals/race.sh metro-port      # one case
+./evals/race.sh expiry          # one case
 RACE_AGENTS=16 ./evals/race.sh  # more pressure
 ```
 
-Six cases, each in its own pool: eight agents racing for three devices, eight
-agents all asking for Metro port 8081, a lapsed lease being picked up by the
-next borrower, two processes releasing the same lease, a simulator deleted
-behind simpool's back, and a simulator the user made by hand. It needs no model,
-so it belongs in CI on every commit.
+Five cases, each in its own pool: eight agents racing for three devices, a
+lapsed lease being picked up by the next borrower, two processes releasing the
+same lease, a simulator deleted behind simpool's back, and a simulator the user
+made by hand. It needs no model, so it belongs in CI on every commit.
 
 ## Agent-behaviour suite
 
 ```bash
 ./evals/run.sh                        # every scenario, skill installed
-./evals/run.sh --scenario 02          # one scenario (prefix match)
+./evals/run.sh --scenario 03          # one scenario (prefix match)
 ./evals/run.sh --arm both --judge     # skill vs. no-skill, plus the LLM judge
 ./evals/run.sh --repeat 3             # three runs each, to see the variance
 ```
@@ -84,26 +82,27 @@ task a user would actually give, and using the pool is the behaviour under test.
 
 ```jsonc
 {
-  "id": "02-metro-port-conflict",
-  "prompt": "I want to run this React Native app on a simulator ...",
+  "id": "03-pool-exhausted",
+  "prompt": "Get me an iOS simulator to run ./smoke.sh on ...",
   "world": {
-    "max_devices": 4,
+    "devices": 1,                                // simulators imported into the pool
     "env": { "SIMPOOL_LEASE_TTL": "20s" },       // simpool's own configuration
     "seed": [                                    // what other agents already did
-      { "as": "agent-b", "run": ["acquire", "--create-if-needed",
-                                 "--meta", "metro-port=8081"],
+      { "as": "agent-b", "run": ["acquire", "--meta", "worktree=/Users/someone/other-checkout"],
         "capture": "other" }
     ],
-    "files": { "package.json": "..." }           // the project the agent finds
+    "files": { "smoke.sh": "..." }               // the project the agent finds
   },
   "checks": [ /* deterministic, see below */ ],
-  "judge":  [ "The agent told the user which Metro port it reserved ..." ]
+  "judge":  [ "The agent stopped and told the user no device was available ..." ]
 }
 ```
 
-Seed steps run as another borrower, with the real binary, so their commands stay
-out of the agent's log. Anything a seed captures can be referenced from the
-prompt or a check as `{{other.data.lease.id}}`.
+`devices` simulators are created with `simctl` and imported before the seed
+runs, because simpool never creates a simulator itself. Seed steps run as
+another borrower, with the real binary, so their commands stay out of the
+agent's log. Anything a seed captures can be referenced from the prompt or a
+check as `{{other.data.lease.id}}`.
 
 ### Checks
 

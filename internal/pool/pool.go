@@ -1,5 +1,5 @@
 // Package pool orchestrates simpool: it reconciles persisted state against the
-// platform, allocates leases atomically and guards pool capacity and deletion.
+// platform and allocates leases atomically.
 package pool
 
 import (
@@ -7,19 +7,12 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"path/filepath"
 	"time"
 
 	"github.com/pchalupa/simpool/internal/config"
-	"github.com/pchalupa/simpool/internal/errs"
 	"github.com/pchalupa/simpool/internal/provider"
 	"github.com/pchalupa/simpool/internal/store"
 )
-
-// namePrefix marks simulators simpool created. The suffix is the identifier of
-// the operation that reserved the create, so an interrupted create is
-// recognisable on the next invocation.
-const namePrefix = "simpool-"
 
 // Pool is the orchestration entry point. One instance serves one CLI command.
 type Pool struct {
@@ -57,10 +50,8 @@ type DeviceView struct {
 
 // ReconcileReport describes what reconciliation changed.
 type ReconcileReport struct {
-	AdoptedDevices   []string `json:"adopted_devices"`
 	MissingDevices   []string `json:"missing_devices"`
 	ExpiredLeases    []string `json:"expired_leases"`
-	AbandonedOps     []string `json:"abandoned_operations"`
 	DiscoveredDevice []string `json:"discovered_devices"`
 }
 
@@ -74,10 +65,8 @@ func (p *Pool) Reconcile(ctx context.Context) (ReconcileReport, error) {
 	}
 
 	report := ReconcileReport{
-		AdoptedDevices:   []string{},
 		MissingDevices:   []string{},
 		ExpiredLeases:    []string{},
-		AbandonedOps:     []string{},
 		DiscoveredDevice: []string{},
 	}
 
@@ -87,20 +76,6 @@ func (p *Pool) Reconcile(ctx context.Context) (ReconcileReport, error) {
 		known, err := knownDeviceIDs(ctx, tx)
 		if err != nil {
 			return err
-		}
-
-		pending, err := tx.PendingOperations(ctx)
-		if err != nil {
-			return err
-		}
-
-		// A create that was interrupted after simctl made the device leaves an
-		// orphan named after its operation; adopt it instead of leaking it.
-		orphanOps := map[string]store.Operation{}
-		for _, operation := range pending {
-			if operation.Kind == store.OperationCreate && operation.DeviceName != "" {
-				orphanOps[operation.DeviceName] = operation
-			}
 		}
 
 		presentIDs := make([]string, 0, len(observed))
@@ -120,26 +95,11 @@ func (p *Pool) Reconcile(ctx context.Context) (ReconcileReport, error) {
 				Borrowable: p.cfg.BorrowUnmanaged,
 			}
 
-			operation, isOrphan := orphanOps[device.Name]
-			if isOrphan && !known[device.ID] {
-				observation.Provenance = store.ProvenancePool
-				observation.Borrowable = true
-			}
-
 			if err := tx.ObserveDevice(ctx, observation, now); err != nil {
 				return err
 			}
 
-			switch {
-			case isOrphan && !known[device.ID]:
-				report.AdoptedDevices = append(report.AdoptedDevices, device.ID)
-
-				if err := tx.FinishOperation(ctx, operation.ID, store.OperationDone, device.ID, "adopted by reconciliation", now); err != nil {
-					return err
-				}
-
-				delete(orphanOps, device.Name)
-			case !known[device.ID]:
+			if !known[device.ID] {
 				report.DiscoveredDevice = append(report.DiscoveredDevice, device.ID)
 			}
 		}
@@ -165,23 +125,6 @@ func (p *Pool) Reconcile(ctx context.Context) (ReconcileReport, error) {
 
 		for _, lease := range expired {
 			report.ExpiredLeases = append(report.ExpiredLeases, lease.ID)
-		}
-
-		// Whatever is left pending past its deadline never produced a device.
-		for _, operation := range pending {
-			if operation.ExpiresAt.After(now) {
-				continue
-			}
-
-			if _, stillOrphan := orphanOps[operation.DeviceName]; !stillOrphan && operation.DeviceName != "" {
-				continue
-			}
-
-			if err := tx.FinishOperation(ctx, operation.ID, store.OperationFailed, "", "abandoned: the process reserving it did not finish", now); err != nil {
-				return err
-			}
-
-			report.AbandonedOps = append(report.AbandonedOps, operation.ID)
 		}
 
 		return nil
@@ -262,7 +205,7 @@ func knownDeviceIDs(ctx context.Context, tx *store.Tx) (map[string]bool, error) 
 	return known, nil
 }
 
-// newID returns an opaque identifier for leases and operations.
+// newID returns an opaque identifier for leases.
 func newID(prefix string) string {
 	buffer := make([]byte, 8)
 	if _, err := rand.Read(buffer); err != nil {
@@ -272,25 +215,4 @@ func newID(prefix string) string {
 	}
 
 	return prefix + "_" + hex.EncodeToString(buffer)
-}
-
-// canonicalWorktree normalises a worktree path so the same checkout is recorded
-// identically by every agent. It is metadata, never proof of ownership.
-func canonicalWorktree(path string) (string, error) {
-	if path == "" {
-		return "", nil
-	}
-
-	absolute, err := filepath.Abs(path)
-	if err != nil {
-		return "", errs.Wrap(err, errs.CodeInvalidArgs, "resolving worktree %q", path)
-	}
-
-	resolved, err := filepath.EvalSymlinks(absolute)
-	if err != nil {
-		// A path that does not exist yet is still recorded, just uncanonicalised.
-		return filepath.Clean(absolute), nil
-	}
-
-	return resolved, nil
 }

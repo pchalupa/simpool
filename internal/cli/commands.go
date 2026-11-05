@@ -8,11 +8,10 @@ import (
 
 	"github.com/pchalupa/simpool/internal/errs"
 	"github.com/pchalupa/simpool/internal/pool"
-	"github.com/pchalupa/simpool/internal/provider"
 )
 
-// commands is the CLI surface. Mutating lease operations take the lease ID: a
-// worktree path is metadata, never proof of ownership.
+// commands is the CLI surface. Mutating lease operations take the lease ID:
+// metadata is never proof of ownership.
 func commands() map[string]command {
 	return map[string]command{
 		"list": {
@@ -31,7 +30,7 @@ func commands() map[string]command {
 		"acquire": {
 			name:      "acquire",
 			summary:   "Reserve a matching simulator and return its device and lease IDs",
-			usage:     "acquire [--device-type TYPE] [--runtime RUNTIME] [--meta KEY=VALUE]... [--create-if-needed]",
+			usage:     "acquire [--device-type TYPE] [--runtime RUNTIME] [--meta KEY=VALUE]...",
 			needsPool: true,
 			bind:      bindAcquire,
 		},
@@ -49,23 +48,9 @@ func commands() map[string]command {
 			needsPool: true,
 			bind:      bindRelease,
 		},
-		"create": {
-			name:      "create",
-			summary:   "Create a pool-owned simulator without leasing it",
-			usage:     "create [--device-type TYPE] [--runtime RUNTIME]",
-			needsPool: true,
-			bind:      bindCreate,
-		},
-		"delete": {
-			name:      "delete",
-			summary:   "Delete an idle pool-owned simulator (never an external one)",
-			usage:     "delete <device-id> [--force]",
-			needsPool: true,
-			bind:      bindDelete,
-		},
 		"import": {
 			name:      "import",
-			summary:   "Allow an externally created simulator to be borrowed",
+			summary:   "Allow an existing simulator to be borrowed",
 			usage:     "import <device-id> [--undo]",
 			needsPool: true,
 			bind:      bindImport,
@@ -109,7 +94,6 @@ func bindAcquire(flags *flag.FlagSet) action {
 	flags.Var(metadata, "meta", metadataUsage)
 	borrower := flags.String("borrower", "", "borrower identity recorded on the lease")
 	ttl := flags.Duration("ttl", 0, "lease duration (default: the configured TTL)")
-	createIfNeeded := flags.Bool("create-if-needed", false, "create a pool-owned device when none is free")
 	noBoot := flags.Bool("no-boot", false, "do not boot the device after leasing it")
 
 	return func(ctx context.Context, environment *env, args []string) (any, error) {
@@ -118,14 +102,13 @@ func bindAcquire(flags *flag.FlagSet) action {
 		}
 
 		return environment.pool.Acquire(ctx, pool.AcquireRequest{
-			Platform:       *platform,
-			DeviceType:     *deviceType,
-			Runtime:        *runtime,
-			Metadata:       metadata.withoutEmptyValues(),
-			Borrower:       *borrower,
-			TTL:            *ttl,
-			CreateIfNeeded: *createIfNeeded,
-			Boot:           !*noBoot,
+			Platform:   *platform,
+			DeviceType: *deviceType,
+			Runtime:    *runtime,
+			Metadata:   metadata.withoutEmptyValues(),
+			Borrower:   *borrower,
+			TTL:        *ttl,
+			Boot:       !*noBoot,
 		})
 	}
 }
@@ -159,37 +142,6 @@ func bindRelease(flags *flag.FlagSet) action {
 		}
 
 		return environment.pool.Release(ctx, leaseID, *shutdown)
-	}
-}
-
-func bindCreate(flags *flag.FlagSet) action {
-	deviceType := flags.String("device-type", "", "device type identifier, name or unambiguous fragment")
-	runtime := flags.String("runtime", "", "runtime identifier, name or version (e.g. 26.5)")
-	platform := flags.String("platform", "ios", "platform to create on")
-
-	return func(ctx context.Context, environment *env, args []string) (any, error) {
-		if err := requireNoArgs(args); err != nil {
-			return nil, err
-		}
-
-		if err := requirePlatform(*platform); err != nil {
-			return nil, err
-		}
-
-		return environment.pool.Create(ctx, *deviceType, *runtime)
-	}
-}
-
-func bindDelete(flags *flag.FlagSet) action {
-	force := flags.Bool("force", false, "delete a pool-owned device even while it is leased")
-
-	return func(ctx context.Context, environment *env, args []string) (any, error) {
-		deviceID, err := requireArg(args, "device-id")
-		if err != nil {
-			return nil, err
-		}
-
-		return environment.pool.Delete(ctx, deviceID, *force)
 	}
 }
 
@@ -251,18 +203,10 @@ func requireNoArgs(args []string) error {
 	return nil
 }
 
-func requirePlatform(platform string) error {
-	if platform != provider.PlatformIOS {
-		return errs.New(errs.CodeInvalidArgs, "platform %q is not supported by this build", platform)
-	}
-
-	return nil
-}
-
 // metadataUsage documents the free-form lease metadata. Nothing is recorded
 // unless the caller asks for it.
 const metadataUsage = "lease metadata as `key=value`; repeatable. " +
-	"simpool acts on worktree and metro_port, and stores any other key as-is"
+	"Stored as-is and shown by list"
 
 // metaFlag collects repeated --meta key=value options.
 type metaFlag struct {

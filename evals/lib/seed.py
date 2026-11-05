@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Put the pool into the state a scenario starts from.
 
-A scenario's `world.seed` list is replayed with the real binary (not the logging
-shim) and a different borrower identity, so the agent's own command log stays
-clean and the leases it meets look like another agent's. Anything a seed command
-returns can be captured under a name and referenced from the prompt or the
-checks as {{name.path.to.field}}.
+`world.devices` simulators are created and imported first, so the pool has
+something to lend. Then the scenario's `world.seed` list is replayed with the
+real binary (not the logging shim) and a different borrower identity, so the
+agent's own command log stays clean and the leases it meets look like another
+agent's. Anything a seed command returns can be captured under a name and
+referenced from the prompt or the checks as {{name.path.to.field}}.
 """
 
 import json
@@ -13,6 +14,9 @@ import os
 import subprocess
 import sys
 import time
+
+POOL_DEVICE_TYPE = "com.apple.CoreSimulator.SimDeviceType.iPhone-17"
+POOL_RUNTIME = "com.apple.CoreSimulator.SimRuntime.iOS-27-0"
 
 
 def run_seed(scenario_path):
@@ -24,10 +28,10 @@ def run_seed(scenario_path):
 
     base_env = dict(os.environ, SIMPOOL_INTERNAL="1")
     base_env.update({key: str(value) for key, value in world.get("env", {}).items()})
-    if "max_devices" in world:
-        base_env["SIMPOOL_MAX_DEVICES"] = str(world["max_devices"])
 
     binary = os.environ["SIMPOOL_REAL_BIN"]
+
+    add_pool_devices(binary, world.get("devices", 0), base_env)
 
     for step in world.get("seed", []):
         if "sleep" in step:
@@ -71,6 +75,29 @@ def run_seed(scenario_path):
         json.dump(facts, handle, indent=2)
 
     return facts
+
+
+def add_pool_devices(binary, count, env):
+    """Create simulators the way a user would and import them into the pool.
+
+    simpool never creates devices itself, so a world with a free device needs
+    one made with simctl first.
+    """
+    for index in range(1, count + 1):
+        created = subprocess.run(
+            ["xcrun", "simctl", "create", "Pool iPhone %d" % index, POOL_DEVICE_TYPE, POOL_RUNTIME],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        if created.returncode != 0:
+            raise SystemExit("creating pool device %d failed: %s" % (index, created.stderr))
+
+        imported = subprocess.run(
+            [binary, "import", created.stdout.strip()], capture_output=True, text=True, env=env
+        )
+        if imported.returncode != 0:
+            raise SystemExit("importing pool device %d failed: %s%s" % (index, imported.stdout, imported.stderr))
 
 
 def resolve(text, facts):

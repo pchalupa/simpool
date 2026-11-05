@@ -174,21 +174,15 @@ either "data" or "error". Run `+"`simpool <command> --help`"+` for options.
 
 Environment:
   %-28s authoritative state directory (default: %s)
-  %-28s maximum pool-owned devices (default: %d)
   %-28s default lease TTL (default: %s)
   %-28s borrower identity recorded on leases
   %-28s timeout for a single platform operation (default: %s)
-  %-28s device type used when creating without --device-type
-  %-28s runtime used when creating without --runtime
-  %-28s set to 1 to borrow externally created simulators without importing them
+  %-28s set to 1 to borrow simulators without importing them
 `,
 		config.EnvStateDir, defaultStateDirHint(),
-		config.EnvMaxDevices, config.DefaultMaxDevices,
 		config.EnvLeaseTTL, config.DefaultLeaseTTL,
 		config.EnvBorrower,
 		config.EnvOpTimeout, config.DefaultOpTimeout,
-		config.EnvDeviceType,
-		config.EnvRuntime,
 		config.EnvBorrowUnmanaged,
 	)
 }
